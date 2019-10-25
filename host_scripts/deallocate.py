@@ -38,7 +38,7 @@ abs_script = os.path.abspath(sys.argv[0])
 #The root direcotry of the script
 abs_root = os.path.dirname(abs_script)
 
-sys.path.append(os.path.join(abs_root, "..", "az"))
+sys.path.append(os.path.join(abs_root, "..", "providers", "azure"))
 azinterface = __import__("azinterface")
 
 #Switch to subscripiton

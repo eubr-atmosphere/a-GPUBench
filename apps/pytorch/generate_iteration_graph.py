@@ -60,7 +60,11 @@ for key in csv_data:
    for row in csv_data[key]:
       epoch_number = int(row[0])
       type_t = row[1]
-      iteration_number = int(row[2])
+      try:
+          iteration_number = int(row[2])
+      except ValueError:
+          print(row)
+          raise
       #If we have reached iteration count or we are in the first iteration of the epoch, but not in the first iteration of the first epoch
       if (iteration_number == 0 and (epoch_number != 0 or type_t != "Training")) or iteration_count == args.aggregate:
          average_data = float(partial_data_sum)/float(iteration_count)

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tensorflow_configuration>
+    <input_classes>
+        <local_path>/home/speziali/imagenet/</local_path>
+        <tfrecords_path>/home/speziali/tmp/</tfrecords_path>
+        <remote_location>
+            <user>logstorage</user>
+            <key>/home/speziali/a-GPUBench/keys/az_key</key>
+            <host>iruel.deib.polimi.it</host>
+            <path>/home/lattuada/atmoshpere/imageNet</path>
+        </remote_location>
+        <input_class>n01729322</input_class>
+        <input_class>n01440764</input_class>
+        <input_class>n01443537</input_class>
+        <input_class>n01484850</input_class>
+        <input_class>n01491361</input_class>
+        <input_class>n01494475</input_class>
+        <input_class>n01496331</input_class>
+        <input_class>n01498041</input_class>
+        <input_class>n01514668</input_class>
+        <input_class>n01514859</input_class>
+        <input_class>n01518878</input_class>
+        <input_class>n01530575</input_class>
+        <input_class>n01531178</input_class>
+        <input_class>n01532829</input_class>
+        <input_class>n01534433</input_class>
+        <input_class>n01537544</input_class>
+    </input_classes>
+    <num_classes>5</num_classes>
+    <images_per_class>9999</images_per_class>
+    <network_type>alexnet_v2</network_type>
+    <epochs_number>1</epochs_number>
+    <batch_size>64</batch_size>
+    <momentum>0.9</momentum>
+    <j>4</j>
+</tensorflow_configuration>

@@ -30,6 +30,7 @@ parser.add_argument('-a', "--application", help="The application to be run. It m
 parser.add_argument('-p', "--parameters", help="The parameters of the experiment", required=True)
 parser.add_argument('-r', "--repetitions", help="The number of times the application has to be executed", default=1)
 parser.add_argument('-d', "--debug", help="Enable debug messages", default=False, action="store_true")
+parser.add_argument('-o', "--output", help="The output root directory", default="output")
 parser.add_argument('--provider', help="The type of remote machine to be used", required=True)
 parser.add_argument("--mail", help="The mail address to which end notification must be sent")
 parser.add_argument("--profile", help="Log resource usage", default="")
@@ -77,6 +78,11 @@ if not args.provider in providers_packages:
 
 provider_package = providers_packages[args.provider]
 
+#Check for mail
+if config["global"]["must_have_email"] and config["global"]["must_have_email"] == "True" and not args.mail:
+    logging.error("--mail option set as mandatory")
+    sys.exit(1)
+
 #Initialize provider wrapper
 logging.info("Initialize provider wrapper")
 provider_package.initialize(config, args)
@@ -85,14 +91,6 @@ provider_package.initialize(config, args)
 if not os.path.exists(os.path.join(abs_root, "keys", "id_rsa")) or not os.path.exists(os.path.join(abs_root, "keys", "id_rsa.pub")):
     logging.error("Please add private/public keys in keys directory")
     sys.exit(1)
-
-#Check for mail
-if config["global"]["must_have_email"] and not args.mail:
-    logging.error("--mail option set as mandatory")
-    sys.exit(1)
-
-else:
-    subscriptioni_command = ""
 
 #If parameters is not a file create a file with a single line
 if "=" in args.parameters:

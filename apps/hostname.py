@@ -1,5 +1,4 @@
 #!/usr/bin/python3
-#!/usr/bin/python3
 """
 Copyright 2018 Marco Lattuada
 
@@ -21,7 +20,7 @@ import socket
 def compute_configuration_name(cl_parameters):
     return "no_parameters"
 
-def collect_data(repetition_path, gpu_type, gpu_number):
+def collect_data(repetition_path, gpu_type, gpu_number, debug):
     csv_file_name = "hostname.csv"
     if os.path.exists(csv_file_name):
         csv_file = open(csv_file_name, "a")

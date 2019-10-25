@@ -94,7 +94,7 @@ def run_experiment(args):
     if args.mail:
         extra_options = extra_options + " --mail "+ args.mail
 
-    remote_command = "screen -d -m /home/" + remote_user + "/a-GPUBench/vm_scripts/launch_local_experiment.py -a " + args.application + " --parameters-list /tmp/" + os.path.basename(list_file_name) + extra_options + " --repetitions " + str(args.repetitions)
+    remote_command = "screen -d -m /home/" + remote_user + "/a-GPUBench/vm_scripts/launch_local_experiment.py -a " + args.application + " --parameters-list /tmp/" + os.path.basename(list_file_name) + extra_options + " --repetitions " + str(args.repetitions) + " --output " + args.output
     logging.info("remote command is %s", remote_command)
 
     ssh_command = "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i " + os.path.join(abs_root, "..", "keys", "id_rsa") + " " + remote_user + "@" + config["inhouse"]["address"] + " " + remote_command

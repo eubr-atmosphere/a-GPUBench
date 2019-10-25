@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tf_deepspeech_configuration>
+    <target_folder>
+        <!-- import_script path inside deepspeech directory -->
+        <import_script>bin/import_ldc93s1.py</import_script>
+        <!-- dataset folder name inside deepspeech/data -->
+        <dataset_dir_name>ldc93s1</dataset_dir_name>
+        <train_csv_name>ldc93s1</train_csv_name>
+        <dev_csv_name>ldc93s1</dev_csv_name>
+        <test_csv_name>ldc93s1</test_csv_name>
+        <import_cv.py>
+            <maxtrain>10</maxtrain>
+            <maxdev>5</maxdev>
+            <maxtest>5</maxtest>
+            <traindirname>cv-valid-train</traindirname>
+            <devdirname>cv-valid-dev</devdirname>
+            <testdirname>cv-valid-test</testdirname>
+        </import_cv.py>
+        <remote_location>
+            <user>desantis</user>
+            <key>/home/desantis/a-GPUBench/keys/id_rsa</key>
+            <host>matemagician.deib.polimi.it</host>
+            <path>~/bin</path>
+        </remote_location>
+    </target_folder>
+    <n_hidden>494</n_hidden>
+    <epochs_number>50</epochs_number>
+    <network_type>tf_deepspeech</network_type>
+    <train_batch_size>1</train_batch_size>
+    <dev_batch_size>1</dev_batch_size>
+    <test_batch_size>1</test_batch_size>
+    <checkpoint_dir>~/.local/share/deepspeech/ldc93s1</checkpoint_dir>
+</tf_deepspeech_configuration>

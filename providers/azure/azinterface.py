@@ -43,12 +43,12 @@ def az_execute_command(command):
     logging.debug(fixed_output)
     json_output = json.loads(fixed_output)
     json_string = json.dumps(json_output, indent=3, separators=(',', ': '), sort_keys=True)
-    logging.debug("\n%s", json_string)
     if "error" in json_output and json_output["error"] != None:
-        logging.error("az command return error")
+        logging.error("az command return error:")
+        logging.error("\n%s", json_string)
         json_string = json.dumps(json_output, indent=3, separators=(',', ': '), sort_keys=True)
-        logging.error("\n%s")
         sys.exit(-1)
+    logging.debug("\n%s", json_string)
     return json_output
 
 #Create a resource group
@@ -200,7 +200,7 @@ def az_vm_ssh_command_invoke(subscription_name, location, size, command, vm_name
             logging.info("SSH completed")
             success = True
         else:
-            logging.info("SSH failed")
+            logging.info("SSH failed. Return code is %d", retcode)
             retry = retry + 1
             time.sleep(30)
     if not success:

@@ -455,12 +455,6 @@ def calculate_epoch(iteration_number: int, batch_size: int, train_size_param: in
 
 def collect_data(repetition_path, gpu_type, gpu_number, debug):
     try:
-        if gpu_type == "Quadro P600":
-            gflops = "1195"
-        elif gpu_type == "M60":
-            gflops = "7365"
-        else:
-            gflops = "NaN"
         # The iterations fractions
         iteration_fractions = [0.25, 0.50, 0.75]
 
@@ -478,17 +472,63 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
             csv_file = open(csv_file_name, "a")
         else:
             csv_file = open(csv_file_name, "w")
-            csv_file.write(
-                "starting timestamp(0),starting time(1),tf version(2),GPU type(3),GPU number(4),Network Type(5),batch size(6),Iterations Fraction(7),Real Iterations Number(8),Computed Iterations Number(9),Skipped Iterations Number(10),epochs(11),CPU threads(12),profile(13),CPUs usage(14),Average CPU usage(15),GPUs usage(16),Average GPU Usage(17),usage ratio(18),data time(19),training time(20),test time(21),overall execution time(22),missing time(23),repetition number(24),path(25),GFlops(26)\n")
+            column_labels = [
+                    "starting timestamp",
+                    "starting time",
+                    "tensorflow version",
+                    "system_UUID",
+                    "mac_address",
+                    "vm_instance",
+                    "GPU type",
+                    "GFlops",
+                    "disk speed",
+                    "GPU number",
+                    "Network Type",
+                    "Network depth",
+                    "classes",
+                    "batch size",
+                    "Iterations Fraction",
+                    "Real Iterations Number",
+                    "Computed Iterations Number",
+                    "Skipped Iterations Number",
+                    "epochs",
+                    "CPU threads",
+                    "profile",
+                    "CPUs usage",
+                    "Average CPU usage",
+                    "GPUs usage",
+                    "Average GPU Usage",
+                    "usage ratio",
+                    "only_load",
+                    "overlapped",
+                    "data time",
+                    "training time",
+                    "test time",
+                    "overall execution time",
+                    "missing time",
+                    "repetition number",
+                    "path"
+                ]
+            index = 0
+            for column_label in column_labels:
+                if index != 0:
+                    csv_file.write(",")
+                csv_file.write(column_label + "(" +str(index) + ")")
+                index = index + 1
+            csv_file.write("\n")
         if not os.path.exists("tf_csvs"):
             os.mkdir("tf_csvs")
 
         execution_stdout_filename = os.path.join(repetition_path, "execution_stdout")
         execution_stderr_filename = os.path.join(repetition_path, "execution_stderr")
+        hw_configuration_filename = os.path.join(repetition_path, "hw_configuration")
         if os.stat(execution_stdout_filename).st_size == 0:
+            return
+        if not os.path.exists(hw_configuration_filename):
             return
         execution_stdout = open(execution_stdout_filename)
         execution_stderr = open(execution_stderr_filename)
+        hw_configuration = open(hw_configuration_filename)
         training_files_number = ""
         local_starting_timestamp = ""
         training_time = 0.0
@@ -534,6 +574,10 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
         if configuration_gpus_number != None:
             gpu_number = int(configuration_gpus_number)
 
+        num_classes = xml_configuration["num_classes"]
+        user_batch_size = xml_configuration["batch_size"]
+        batch_size = int(user_batch_size) * int(gpu_number)
+
         # Computing training_time
         for line in open(execution_stderr_filename):
             if line.startswith("INFO:tensorflow:global step "):
@@ -544,7 +588,7 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
 
                 epoch = calculate_epoch(
                     step,
-                    int(xml_configuration["batch_size"]),
+                    int(batch_size),
                     int(training_files_number),
                     int(xml_configuration["epochs_number"])
                 )
@@ -576,7 +620,7 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
 
                     epoch = calculate_epoch(
                         step,
-                        int(xml_configuration["batch_size"]),
+                        int(batch_size),
                         int(training_files_number),
                         int(xml_configuration["epochs_number"])
                     )
@@ -584,7 +628,6 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                     iteration_data_time = "NaN"
                     end = "NaN"
 
-                    training_time += sec_step
                     data_time = data_time + float(iteration_data_time)
                     if current_iteration < skipped_initial_iterations:
                         initial_training_time = initial_training_time + float(sec_step)
@@ -815,17 +858,43 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                 sys.exit(-1)
 
         network_type = xml_configuration["network_type"]
-        batch_size = xml_configuration["batch_size"]
         epochs_number = xml_configuration["epochs_number"]
         computed_iterations_number = int(xml_configuration.get("iteration_number"))
         if not computed_iterations_number:
             computed_iterations_number = str(int(training_files_number) * int(epochs_number) / int(batch_size))
         tf_version = xml_configuration.get("tensorflow_version")
         if not tf_version:
-            tf_version = ""
+            tf_version = "unknown"
         j = xml_configuration.get("j")
         if not j:
             j = "4"
+
+        #Retrieving mac address
+        for line in hw_configuration:
+           if line.find("serial: ") != -1:
+              mac_address = line.split()[1]
+
+        if mac_address == "":
+           logging.error("mac address not found")
+           sys.exit(1)
+
+        #Retrieving machine information
+        #Add host_scripts to the directories for python packages search
+        host_scripts_path = os.path.join(abs_root, "..", "host_scripts")
+        sys.path.append(host_scripts_path)
+        collect_data_package = __import__("collect_data")
+        machine_information = collect_data_package.get_machine_information(mac_address)
+        if xml_configuration.get("system_UUID"):
+            system_uuid = xml_configuration.get("system_UUID")
+        else:
+            system_uuid = machine_information["system_uuid"]
+        machine_name = machine_information["machine_name"]
+        disk_speed = machine_information["disk_speed"]
+        gflops = machine_information["gflops"]
+
+        only_load = "0"
+        overlapped = "0"
+
         profile = xml_configuration.get("profile")
         if not profile or not os.path.exists(profile_file_name_sum_cpu) or not os.path.exists(
                 profile_file_name_sum_gpu):
@@ -891,14 +960,14 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
             data_time_fraction = "NaN"
             training_time_fraction = training_time_fractions[iteration_fraction]
             csv_file.write(
-                str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + gpu_type + "," + str(gpu_number) + "," + network_type + "," + batch_size + "," + str(iteration_fraction) + "," + str(iteration_number_fraction) + "," + str(float(computed_iterations_number) * iteration_fraction) + ",0," + epochs_number_fraction + "," + j + "," + profile + ",NaN,NaN,NaN,NaN,NaN," + str(data_time_fraction) + "," + str(training_time_fraction) + ",NaN,NaN,NaN," + repetition_number + "," + repetition_path + "," + gflops + "\n")
+                str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + system_uuid + "," + mac_address + "," + machine_name + "," + gpu_type + "," + gflops + "," + disk_speed + "," + str(gpu_number) + "," + network_type + ",NaN," + num_classes + "," + str(batch_size) + "," + str(iteration_fraction) + "," + str(iteration_number_fraction) + "," + str(float(computed_iterations_number) * iteration_fraction) + ",0," + epochs_number_fraction + "," + j + "," + profile + ",NaN,NaN,NaN,NaN,NaN," + only_load + "," + overlapped + "," + str(data_time_fraction) + "," + str(training_time_fraction) + ",NaN,NaN,NaN," + repetition_number + "," + repetition_path + "\n")
             if iteration_number_fraction > skipped_initial_iterations:
-                csv_file.write(str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + gpu_type + "," + str(gpu_number) + "," + network_type + "," + batch_size + "," + str(iteration_fraction) + "," + str(iteration_number_fraction - skipped_initial_iterations) + "," + str(float(computed_iterations_number) * iteration_fraction - skipped_initial_iterations) + "," + str(skipped_initial_iterations) + "," + epochs_number_fraction + "," + j + "," + profile + ",NaN,NaN,NaN,NaN,NaN," + "NaN" + "," + str(training_time_fraction - initial_training_time) + ",NaN,NaN,NaN," + repetition_number + "," + repetition_path + "," + gflops + "\n")
+                csv_file.write(str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + system_uuid + "," + mac_address + "," + machine_name + "," + gpu_type + "," + gflops + "," + disk_speed + "," + str(gpu_number) + "," + network_type + ",NaN," + num_classes + "," + str(batch_size) + "," + str(iteration_fraction) + "," + str(iteration_number_fraction - skipped_initial_iterations) + "," + str(float(computed_iterations_number) * iteration_fraction - skipped_initial_iterations) + "," + str(skipped_initial_iterations) + "," + epochs_number_fraction + "," + j + "," + profile + ",NaN,NaN,NaN,NaN,NaN," + only_load + "," + overlapped + "," + "NaN" + "," + str(training_time_fraction - initial_training_time) + ",NaN,NaN,NaN," + repetition_number + "," + repetition_path + "\n")
 
         # Writing full experiment data
-        csv_file.write(str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + gpu_type + "," + str(gpu_number) + "," + network_type + "," + batch_size + ",1.0," + str(iterations_number) + "," + str(computed_iterations_number) + ",0," + epochs_number + "," + j + "," + profile + "," + str(CPU_usage) + "," + str(average_CPU_usage) + "," + str(GPU_usage) + "," + str(average_GPU_usage) + "," + str(usage_ratio) + "," + "NaN" + "," + str(training_time) + "," + "NaN" + "," + overall_execution_time + "," + "NaN" + "," + repetition_number + "," + repetition_path + "," + gflops + "\n")
+        csv_file.write(str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + system_uuid + "," + mac_address + "," + machine_name + "," + gpu_type + "," + gflops + "," + disk_speed + "," + str(gpu_number) + "," + network_type + ",NaN," + num_classes + "," + str(batch_size) + ",1.0," + str(iterations_number) + "," + str(computed_iterations_number) + ",0," + epochs_number + "," + j + "," + profile + "," + str(CPU_usage) + "," + str(average_CPU_usage) + "," + str(GPU_usage) + "," + str(average_GPU_usage) + "," + str(usage_ratio) + "," + only_load + "," + overlapped + "," + "NaN" + "," + str(training_time) + "," + "NaN" + "," + overall_execution_time + "," + "NaN" + "," + repetition_number + "," + repetition_path + "\n")
         if iterations_number > skipped_initial_iterations:
-            csv_file.write(str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + gpu_type + "," + str(gpu_number) + "," + network_type + "," + batch_size + ",1.0," + str(iterations_number - skipped_initial_iterations) + "," + str(float(computed_iterations_number) - skipped_initial_iterations) + "," + str(skipped_initial_iterations) + "," + epochs_number + "," + j + "," + profile + "," + str(CPU_usage) + "," + str(average_CPU_usage) + "," + str(GPU_usage) + "," + str(average_GPU_usage) + "," + str(usage_ratio) + "," + "NaN" + "," + str(training_time - initial_training_time) + "," + "NaN" + "," + overall_execution_time + "," + "NaN" +"," + repetition_number + "," + repetition_path + "," + gflops + "\n")
+            csv_file.write(str(local_starting_timestamp) + "," + local_starting_time + "," + tf_version + "," + system_uuid + "," + mac_address + "," + machine_name + "," + gpu_type + "," + gflops + "," + disk_speed + "," + str(gpu_number) + "," + network_type + ",NaN," + num_classes + "," + str(batch_size) + ",1.0," + str(iterations_number - skipped_initial_iterations) + "," + str(float(computed_iterations_number) - skipped_initial_iterations) + "," + str(skipped_initial_iterations) + "," + epochs_number + "," + j + "," + profile + "," + str(CPU_usage) + "," + str(average_CPU_usage) + "," + str(GPU_usage) + "," + str(average_GPU_usage) + "," + str(usage_ratio) + "," + only_load + "," + overlapped + "," + "NaN" + "," + str(training_time - initial_training_time) + "," + "NaN" + "," + overall_execution_time + "," + "NaN" +"," + repetition_number + "," + repetition_path + "\n")
         csv_file.close()
 
     except:
@@ -923,6 +992,9 @@ if __name__ == '__main__':
 
     # Creating the experiment directories (if not exist)
     local_path = config["input_classes"]["local_path"]
+    #Expand ~ when present
+    if local_path.find("~") != -1:
+        local_path = os.path.expanduser(local_path)
     tfrecord_path_base = config["input_classes"]["tfrecords_path"]
     train_path, val_path = create_experiment_paths(local_path)
 
@@ -942,15 +1014,41 @@ if __name__ == '__main__':
     config["iteration_number"] = int(int(config["epochs_number"]) * train_size / int(config["batch_size"])) + 1
 
     # Adding tensorflow version
-    config["tensorflow_version"] = tf.__dict__['VERSION'] or tf.__dict__['__version__'] or "1.8.0"
+    if 'VERSION' in tf.__dict__:
+       version = tf.__dict__['VERSION']
+    elif '__version__' in tf.__dict__:
+       version = tf.__dict__['__version__']
+    else:
+       version = "unknown"
+    config["tensorflow_version"] = version
+
+    #Adding system UUID
+    if not os.path.exists("/etc/system_uuid"):
+        logging.warning("/etc/system_uuid does not exists")
+    else:
+        uuid_line = open("/etc/system_uuid", "r").readline()
+        if len(uuid_line.split()) != 2:
+            logging.error("Error in loading uuid: %s", str(uuid_line.split()))
+            sys.exit(1)
+        uuid = uuid_line.split()[1]
+
+        config["system_UUID"] = uuid
 
     # Dump configuration in xml
     generated_xml = dump_conf(config)
 
+    #If the number of gpus is specified, uses it, otherwise leave default (all gpus will be used)
+    gpus_number = config.get("gpus_number")
+    if gpus_number is None:
+        export_gpus_command = ""
+    else:
+        export_gpus_command = "CUDA_VISIBLE_DEVICES=" + ",".join(str(gpu) for gpu in list(range(0, int(gpus_number)))) + " "
+
+
     # Perform the actual nn training
     imagenet_script = os.path.join(abs_root, "tf", "slim", "train_image_classifier.py")
 
-    imagenet_command = "python3 {} " \
+    imagenet_command = "{} python3 {} " \
                        "--log_every_n_steps={} " \
                        "--model_name={} " \
                        "--max_number_of_steps={} " \
@@ -964,6 +1062,7 @@ if __name__ == '__main__':
                        "--save_interval_secs={} " \
                        "--optimizer={} " \
         .format(
+            export_gpus_command,
             imagenet_script,
             1,
             config["network_type"],

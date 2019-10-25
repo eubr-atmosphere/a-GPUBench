@@ -146,6 +146,6 @@ def run_experiment(args):
     if args.mail:
         extra_options = extra_options + " --mail "+ args.mail
 
-    remote_command = "screen -d -m /home/" + remote_user + "/a-GPUBench/vm_scripts/launch_local_experiment.py -a " + args.application + " --parameters-list /tmp/" + os.path.basename(list_file_name) + extra_options + " --repetitions " + str(args.repetitions) + " --subscription " + subscription_name
+    remote_command = "screen -d -m /home/" + remote_user + "/a-GPUBench/vm_scripts/launch_local_experiment.py -a " + args.application + " --parameters-list /tmp/" + os.path.basename(list_file_name) + extra_options + " --repetitions " + str(args.repetitions) + " --subscription " + subscription_name  + " --output " + args.output
     logging.info("remote command is %s", remote_command)
     azinterface.az_vm_ssh_command_invoke(subscription_name, location, size, remote_command, config["azure"]["prefix"], remote_user)

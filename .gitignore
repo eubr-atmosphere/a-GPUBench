@@ -2,8 +2,8 @@ configurations/current.ini
 configurations/polimi.ini
 keys/id_rsa
 keys/id_rsa.pub
+providers/*csv
 providers/__pycache__/
 providers/azure/__pycache__/
 vm_scripts/revaliases
 vm_scripts/ssmtp.conf
-

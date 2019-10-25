@@ -145,6 +145,12 @@ for line in parameters_list_file.read().splitlines():
         line = line + ",profile=" + args.profile
     local_command = application_file + " --parameters " + line
 
+
+    #Info execution
+    logging.info("Pyhton version: " + str(sys.executable))
+
+
+
     #Execute the experiment
     starting_time = time.ctime()
     for repetition in range(0, int(args.repetitions)):
@@ -153,7 +159,9 @@ for line in parameters_list_file.read().splitlines():
         os.makedirs(output_repetition)
         stdout_file_name = os.path.join(output_repetition, "execution_stdout")
         stderr_file_name = os.path.join(output_repetition, "execution_stderr")
+        logging.info("CWD output repetition: %s", output_repetition)
         logging.info("Executing experiment: %s", local_command)
+
         wrapped_command = "{ { " + local_command + "; } > >(tee " + stdout_file_name + " ); } 2> >(tee " + stderr_file_name + " >&2)"
         if args.profile != "":
             profile_CPU_output_file_name = os.path.join(output_repetition, "profile_CPU_output")
@@ -164,6 +172,10 @@ for line in parameters_list_file.read().splitlines():
             profile_CPU_process = subprocess.Popen(profile_CPU_command, cwd=output_repetition, shell=True, executable="/bin/bash", preexec_fn=os.setsid)
             profile_GPU_process = subprocess.Popen(profile_GPU_command, cwd=output_repetition, shell=True, executable="/bin/bash", preexec_fn=os.setsid)
         local_retcode = subprocess.call(wrapped_command, cwd=output_repetition, shell=True, executable="/bin/bash")
+        '''
+        local_retcode = subprocess.call("echo $PATH", cwd=output_repetition, shell=True, executable="/bin/bash")
+        local_retcode = subprocess.call('export PATH="$PATH:/usr/local/cuda-9.0/bin"; export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}; '+ "echo $PATH; " + wrapped_command, cwd=output_repetition, shell=True, executable="/bin/bash")
+        '''
         if args.profile != "":
             os.killpg(os.getpgid(profile_CPU_process.pid), signal.SIGKILL)
             os.killpg(os.getpgid(profile_GPU_process.pid), signal.SIGKILL)
@@ -172,7 +184,7 @@ for line in parameters_list_file.read().splitlines():
     ending_time = time.ctime()
 
     #Copy files
-    rsync_command = "rsync -a --out-format=\"%n\" --ignore-existing -e \"ssh -i " + key_file + " -o StrictHostKeyChecking=no\" --chown " + logserver_username + ":" + logserver_group + " " + output_root + " " + logserver_username + "@" + logserver_address + ":/home/" + logserver_username
+    rsync_command = "rsync -rltD --chmod=ug=rwX --out-format=\"%n\" --ignore-existing -e \"ssh -i " + key_file + " -o StrictHostKeyChecking=no\" --chown " + logserver_username + ":" + logserver_group + " " + output_root + " " + logserver_username + "@" + logserver_address + ":/home/" + logserver_username
     logging.info("rsync command is %s", rsync_command)
     cmd = subprocess.Popen(rsync_command, shell=True, stdout=subprocess.PIPE, executable="/bin/bash")
     stdout = cmd.stdout.read()

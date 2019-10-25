@@ -16,6 +16,8 @@ limitations under the License.
 """
 import argparse
 import csvsort
+import pandas
+import shutil
 
 parser = argparse.ArgumentParser(description="Sort cvs by columns")
 parser.add_argument("-i", "--input", help="The input file", required=True)
@@ -23,7 +25,18 @@ parser.add_argument("-o", "--output", help="The output file", required=True)
 parser.add_argument("-c", "--columns", help="The list of columns to be considered", required=True)
 args = parser.parse_args()
 
-column_indices = []
+#For each column index, the full column name
+full_column_names = {}
+
+data = pandas.read_csv(args.input, na_values="-")
+index = 0
+for column_name in data.columns:
+   full_column_names[index] = column_name
+   index = index + 1
+
+column_names = []
 for column in args.columns.split(","):
-    column_indices.append(int(column))
-csvsort.csvsort(args.input, column_indices, output_filename=args.output, has_header=True)
+    column_names.append(full_column_names[int(column)])
+
+sorted_data = data.sort_values(by=column_names)
+sorted_data.to_csv(args.output, index=False, na_rep="NaN")

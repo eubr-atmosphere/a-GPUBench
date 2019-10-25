@@ -25,9 +25,9 @@ do
 done
 
 apt update
-apt dist-upgrade
+apt dist-upgrade -y
 
-apt install -y python3 python3-pip screen wget ssmtp lshw lsb-release
+apt install -y python3 python3-pip screen wget ssmtp lshw lsb-release sox software-properties-common libssl-dev libsox-fmt-mp3
 
 if [ -f a-GPUBench/vm_scripts/ssmtp.conf ]; then
    cp a-GPUBench/vm_scripts/ssmtp.conf /etc/ssmtp/ssmtp.conf
@@ -37,14 +37,21 @@ if [ -f a-GPUBench/vm_scripts/revaliases ]; then
 fi
 
 #Install cuda 9.0 since cuda 9.1 is not officially supported by pytorch 0.3.1
-wget developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/cuda-repo-ubuntu1604_9.0.176-1_amd64.deb
+if [ ! -f cuda-repo-ubuntu1604_9.0.176-1_amd64.deb ]; then
+   wget developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/cuda-repo-ubuntu1604_9.0.176-1_amd64.deb
+fi
 dpkg -i cuda-repo-ubuntu1604_9.0.176-1_amd64.deb
 apt-key adv --fetch-keys http://developer.download.nvidia.com/compute/cuda/repos/ubuntu1604/x86_64/7fa2af80.pub
 apt update
 apt install -y cuda-9-0
 
-if [ -f a-GPUBench/vm_scripts/libcudnn7_7.1.3.16-1+cuda9.0_amd64.deb ]; then
-   dpkg --install a-GPUBench/vm_scripts/libcudnn7_7.1.3.16-1+cuda9.0_amd64.deb
+
+if [ ! -f libcudnn7_7.1.3.16-1+cuda9.0_amd64.deb ]; then
+   wget https://developer.download.nvidia.com/compute/machine-learning/repos/ubuntu1604/x86_64/libcudnn7_7.1.3.16-1+cuda9.0_amd64.deb
+fi
+
+if [ -f libcudnn7_7.1.3.16-1+cuda9.0_amd64.deb ]; then
+   dpkg --install libcudnn7_7.1.3.16-1+cuda9.0_amd64.deb
 fi
 
 echo "export PATH=/usr/local/cuda/bin\${PATH:+:\${PATH}}" >> ~/.bashrc
@@ -57,7 +64,29 @@ pip3 install http://download.pytorch.org/whl/cu"$CUDA_VERSION"/torch-0.3.1-cp"$P
 pip3 install torchvision
 pip3 install dicttoxml xmltodict
 pip3 install scipy
-pip3 install tensorflow-gpu
+pip3 install tensorflow-gpu==1.8.0
+
+#tf_deepspeech modules
+add-apt-repository -y ppa:git-core/ppa
+apt update
+curl -s https://packagecloud.io/install/repositories/github/git-lfs/script.deb.sh | sudo bash
+apt install -y git-lfs libffi-dev
+git lfs install
+pip3 install pandas
+pip3 install progressbar2
+pip3 install python-utils
+pip3 install numpy
+pip3 install matplotlib
+pip3 install scipy
+pip3 install paramiko >= 2.1
+pip3 install pysftp
+pip3 install sox
+pip3 install python_speech_features
+pip3 install pyxdg
+pip3 install bs4
+pip3 install six
+pip3 install requests
+pip3 install deepspeech-gpu==0.1.1
 
 #Change owner of mnt
 USER=$(stat -c "%U" $0)
@@ -65,3 +94,18 @@ chown $USER:$USER /mnt
 
 #Create symbolic link to mnt
 ln -s /mnt tmp
+
+#If UUID file already exists, check that it is still the same
+if [ -e /etc/system_uuid ];
+then
+   stored_sytemd_uuid=$(cat /etc/system_uuid)
+   runtime_system_uuid=$(dmidecode | grep UUID)
+   if [ "$runtime_system_uuid" != "$stored_sytemd_uuid" ];
+   then
+      echo "New uuid $runtime_system_uuid (old was $stored_sytemd_uuid)"
+      exit 1
+   fi
+#If it does not yet exist, save system UUID in a file
+else
+   dmidecode | grep UUID > /etc/system_uuid
+fi

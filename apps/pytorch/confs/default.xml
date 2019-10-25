@@ -1016,4 +1016,5 @@
    <batch_size>256</batch_size>
    <momentum>0.9</momentum>
    <j>4</j>
+   <only_load>False</only_load>
 </pytorch_configuration>
