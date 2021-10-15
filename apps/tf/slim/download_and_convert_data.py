@@ -1,4 +1,5 @@
 # Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 Giovanni Dispoto
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,16 +19,21 @@ Usage:
 ```shell
 
 $ python download_and_convert_data.py \
-    --dataset_name=mnist \
-    --dataset_dir=/tmp/mnist
+    --dataset_name=flowers \
+    --dataset_dir=/tmp/flowers
 
 $ python download_and_convert_data.py \
     --dataset_name=cifar10 \
     --dataset_dir=/tmp/cifar10
 
 $ python download_and_convert_data.py \
-    --dataset_name=flowers \
-    --dataset_dir=/tmp/flowers
+    --dataset_name=mnist \
+    --dataset_dir=/tmp/mnist
+
+$ python download_and_convert_data.py \
+    --dataset_name=visualwakewords \
+    --dataset_dir=/tmp/visualwakewords
+
 ```
 """
 from __future__ import absolute_import
@@ -35,39 +41,49 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
+import argparse
 
-from datasets import download_and_convert_cifar10
 from datasets import download_and_convert_flowers
 from datasets import download_and_convert_mnist
+from datasets import download_and_convert_vqa
 
-FLAGS = tf.app.flags.FLAGS
-
-tf.app.flags.DEFINE_string(
-    'dataset_name',
-    None,
-    'The name of the dataset to convert, one of "cifar10", "flowers", "mnist".')
-
-tf.app.flags.DEFINE_string(
-    'dataset_dir',
-    None,
-    'The directory where the output TFRecords and temporary files are saved.')
+parser = argparse.ArgumentParser()
 
 
-def main(_):
-  if not FLAGS.dataset_name:
+parser.add_argument(
+    '--dataset_name',
+    default = '',
+    help = 'The name of the dataset to convert, one of "flowers" or "VQA"'
+    )
+
+parser.add_argument(
+    '--dataset_dir',
+    default = '',
+    help = 'The directory where the output TFRecords and temporary files are saved.')
+
+parser.add_argument(
+    '--small_object_area_threshold', default  = 0.005, type=int,
+    help = 'For --dataset_name=visualwakewords only. Threshold of fraction of image area below which small objects are filtered')
+
+parser.add_argument(
+    '--foreground_class_of_interest', default =  'person',
+    help = 'For --dataset_name=visualwakewords only. Build a binary classifier based on the presence or absence of this object in the image.')
+
+args = parser.parse_args()
+
+def main():
+  if args.dataset_name == '':
     raise ValueError('You must supply the dataset name with --dataset_name')
-  if not FLAGS.dataset_dir:
+  if args.dataset_dir == '':
     raise ValueError('You must supply the dataset directory with --dataset_dir')
 
-  if FLAGS.dataset_name == 'cifar10':
-    download_and_convert_cifar10.run(FLAGS.dataset_dir)
-  elif FLAGS.dataset_name == 'flowers':
-    download_and_convert_flowers.run(FLAGS.dataset_dir)
-  elif FLAGS.dataset_name == 'mnist':
-    download_and_convert_mnist.run(FLAGS.dataset_dir)
+  if args.dataset_name == 'flowers':
+    download_and_convert_flowers.run(args.dataset_dir)
+  elif args.dataset_name == 'vqa':
+    download_and_convert_vqa.run(args.dataset_dir)  
   else:
     raise ValueError(
-        'dataset_name [%s] was not recognized.' % FLAGS.dataset_name)
+        'dataset_name [%s] was not recognized.' % args.dataset_name)
 
 if __name__ == '__main__':
-  tf.app.run()
+  main()

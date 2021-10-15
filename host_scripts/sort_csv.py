@@ -15,9 +15,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 import argparse
-import csvsort
 import pandas
-import shutil
+
+"""
+Script to sort content of the CSV
+
+This script sort the CSV in order to limit the modification to the generated CSV just to the newly added data
+Its parameters are:
+    -i, --input: the input file
+    -o, --output: the output file
+    -c, --columns: the columns to be considered in the sorting
+"""
 
 parser = argparse.ArgumentParser(description="Sort cvs by columns")
 parser.add_argument("-i", "--input", help="The input file", required=True)
@@ -31,8 +39,8 @@ full_column_names = {}
 data = pandas.read_csv(args.input, na_values="-")
 index = 0
 for column_name in data.columns:
-   full_column_names[index] = column_name
-   index = index + 1
+    full_column_names[index] = column_name
+    index = index + 1
 
 column_names = []
 for column in args.columns.split(","):

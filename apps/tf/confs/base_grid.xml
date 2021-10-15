@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tensorflow_configuration>
+    <input_classes>
+        <local_path>/data/dataset/imagenet/raw-data</local_path>
+        <tfrecords_path>/data/dataset/imagenet</tfrecords_path>
+        <remote_location>
+            <user>dispoto</user>
+            <key>/app/keys/AIRLab/id_rsa</key>
+            <host>localhost</host>
+            <path>/data/dataset/imagenet/raw-data</path>
+        </remote_location>
+	<input_class>n03956157</input_class>
+    <input_class>n03958227</input_class>
+    <input_class>n03961711</input_class>
+    <input_class>n03967562</input_class>
+    <input_class>n03970156</input_class>
+    <input_class>n03976467</input_class>
+    <input_class>n03976657</input_class>
+    <input_class>n03977966</input_class>
+    <input_class>n03980874</input_class>
+    <input_class>n03982430</input_class>
+    </input_classes>
+    <num_classes>10</num_classes>
+    <images_per_class>1300</images_per_class>
+    <network_type></network_type>
+    <patience>10</patience>
+    <perform_validation>True</perform_validation>
+    <learning_rate_decay_type></learning_rate_decay_type>
+    <learning_rate></learning_rate>
+    <dropout></dropout>
+    <weight_decay>0.01</weight_decay>
+    <seed>1234</seed>
+    <epochs_number>100</epochs_number>
+    <batch_size></batch_size>
+    <momentum></momentum>
+    <optimizer></optimizer>
+    <model_out>/data/model_out/</model_out>
+    <dataset>imagenet</dataset>
+    <j>4</j>
+</tensorflow_configuration>

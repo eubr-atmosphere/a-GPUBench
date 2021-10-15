@@ -1,4 +1,5 @@
 # Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 Giovanni Dispoto
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,7 +35,7 @@ units.
 
 Typical use:
 
-   from tensorflow.contrib.slim.nets import resnet_v1
+   from tf_slim.nets import resnet_v1
 
 ResNet-101 for image classification into 1000 classes:
 
@@ -51,95 +52,25 @@ ResNet-101 for semantic segmentation into 21 classes:
                                                 is_training=False,
                                                 global_pool=False,
                                                 output_stride=16)
+credits: https://medium.com/analytics-vidhya/understanding-and-implementation-of-residual-networks-resnets-b80f9a507b9c
 """
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
 
-from nets import resnet_utils
 
-
-resnet_arg_scope = resnet_utils.resnet_arg_scope
-slim = tf.contrib.slim
-
-
-@slim.add_arg_scope
-def bottleneck(inputs,
-               depth,
-               depth_bottleneck,
-               stride,
-               rate=1,
-               outputs_collections=None,
-               scope=None,
-               use_bounded_activations=False):
-  """Bottleneck residual unit variant with BN after convolutions.
-
-  This is the original residual unit proposed in [1]. See Fig. 1(a) of [2] for
-  its definition. Note that we use here the bottleneck variant which has an
-  extra bottleneck layer.
-
-  When putting together two consecutive ResNet blocks that use this unit, one
-  should use stride = 2 in the last unit of the first block.
-
-  Args:
-    inputs: A tensor of size [batch, height, width, channels].
-    depth: The depth of the ResNet unit output.
-    depth_bottleneck: The depth of the bottleneck layers.
-    stride: The ResNet unit's stride. Determines the amount of downsampling of
-      the units output compared to its input.
-    rate: An integer, rate for atrous convolution.
-    outputs_collections: Collection to add the ResNet unit output.
-    scope: Optional variable_scope.
-    use_bounded_activations: Whether or not to use bounded activations. Bounded
-      activations better lend themselves to quantized inference.
-
-  Returns:
-    The ResNet unit's output.
-  """
-  with tf.variable_scope(scope, 'bottleneck_v1', [inputs]) as sc:
-    depth_in = slim.utils.last_dimension(inputs.get_shape(), min_rank=4)
-    if depth == depth_in:
-      shortcut = resnet_utils.subsample(inputs, stride, 'shortcut')
-    else:
-      shortcut = slim.conv2d(
-          inputs,
-          depth, [1, 1],
-          stride=stride,
-          activation_fn=tf.nn.relu6 if use_bounded_activations else None,
-          scope='shortcut')
-
-    residual = slim.conv2d(inputs, depth_bottleneck, [1, 1], stride=1,
-                           scope='conv1')
-    residual = resnet_utils.conv2d_same(residual, depth_bottleneck, 3, stride,
-                                        rate=rate, scope='conv2')
-    residual = slim.conv2d(residual, depth, [1, 1], stride=1,
-                           activation_fn=None, scope='conv3')
-
-    if use_bounded_activations:
-      # Use clip_by_value to simulate bandpass activation.
-      residual = tf.clip_by_value(residual, -6.0, 6.0)
-      output = tf.nn.relu6(shortcut + residual)
-    else:
-      output = tf.nn.relu(shortcut + residual)
-
-    return slim.utils.collect_named_outputs(outputs_collections,
-                                            sc.name,
-                                            output)
-
-
-def resnet_v1(inputs,
-              blocks,
-              num_classes=None,
-              is_training=True,
-              global_pool=True,
-              output_stride=None,
-              include_root_block=True,
-              spatial_squeeze=True,
-              store_non_strided_activations=False,
-              reuse=None,
-              scope=None):
+def resnet_v1_50(num_classes=1000,
+           is_training=True,
+           dropout_keep_prob=0.5,
+           spatial_squeeze=True,
+           weight_decay = 0.0005,
+           reuse=None,
+           fc_conv_padding='VALID',
+           network_depth = None,
+           global_pool=False):
   """Generator for v1 ResNet models.
 
   This function generates a family of ResNet v1 models. See the resnet_v1_*()
@@ -169,7 +100,9 @@ def resnet_v1(inputs,
       is a resnet_utils.Block object describing the units in the block.
     num_classes: Number of predicted classes for classification tasks.
       If 0 or None, we return the features before the logit layer.
-    is_training: whether batch_norm layers are in training mode.
+    is_training: whether batch_norm layers are in training mode. If this is set
+      to None, the callers can specify slim.batch_norm's is_training parameter
+      from an outer slim.arg_scope.
     global_pool: If True, we perform global average pooling before computing the
       logits. Set to True for image classification, False for dense prediction.
     output_stride: If None, then the output will be computed at the nominal
@@ -206,157 +139,184 @@ def resnet_v1(inputs,
   Raises:
     ValueError: If the target output_stride is not valid.
   """
-  with tf.variable_scope(scope, 'resnet_v1', [inputs], reuse=reuse) as sc:
-    end_points_collection = sc.original_name_scope + '_end_points'
-    with slim.arg_scope([slim.conv2d, bottleneck,
-                         resnet_utils.stack_blocks_dense],
-                        outputs_collections=end_points_collection):
-      with slim.arg_scope([slim.batch_norm], is_training=is_training):
-        net = inputs
-        if include_root_block:
-          if output_stride is not None:
-            if output_stride % 4 != 0:
-              raise ValueError('The output_stride needs to be a multiple of 4.')
-            output_stride /= 4
-          net = resnet_utils.conv2d_same(net, 64, 7, stride=2, scope='conv1')
-          net = slim.max_pool2d(net, [3, 3], stride=2, scope='pool1')
-        net = resnet_utils.stack_blocks_dense(net, blocks, output_stride,
-                                              store_non_strided_activations)
-        # Convert end_points_collection into a dictionary of end_points.
-        end_points = slim.utils.convert_collection_to_dict(
-            end_points_collection)
-
-        if global_pool:
-          # Global average pooling.
-          net = tf.reduce_mean(net, [1, 2], name='pool5', keep_dims=True)
-          end_points['global_pool'] = net
-        if num_classes:
-          net = slim.conv2d(net, num_classes, [1, 1], activation_fn=None,
-                            normalizer_fn=None, scope='logits')
-          end_points[sc.name + '/logits'] = net
-          if spatial_squeeze:
-            net = tf.squeeze(net, [1, 2], name='SpatialSqueeze')
-            end_points[sc.name + '/spatial_squeeze'] = net
-          end_points['predictions'] = slim.softmax(net, scope='predictions')
-        return net, end_points
-resnet_v1.default_image_size = 224
-
-
-def resnet_v1_block(scope, base_depth, num_units, stride):
-  """Helper function for creating a resnet_v1 bottleneck block.
-
-  Args:
-    scope: The scope of the block.
-    base_depth: The depth of the bottleneck layer for each unit.
-    num_units: The number of units in the block.
-    stride: The stride of the block, implemented as a stride in the last unit.
-      All other units have stride=1.
-
-  Returns:
-    A resnet_v1 bottleneck block.
   """
-  return resnet_utils.Block(scope, bottleneck, [{
-      'depth': base_depth * 4,
-      'depth_bottleneck': base_depth,
-      'stride': 1
-  }] * (num_units - 1) + [{
-      'depth': base_depth * 4,
-      'depth_bottleneck': base_depth,
-      'stride': stride
-  }])
+    Implementation of the popular ResNet50 the following architecture:
+    CONV2D -> BATCHNORM -> RELU -> MAXPOOL -> CONVBLOCK -> IDBLOCK*2 -> CONVBLOCK -> IDBLOCK*3
+    -> CONVBLOCK -> IDBLOCK*5 -> CONVBLOCK -> IDBLOCK*2 -> AVGPOOL -> TOPLAYER
+
+    Arguments:
+    input_shape -- shape of the images of the dataset
+    classes -- integer, number of classes
+
+    Returns:
+    model -- a Model() instance in Keras
+    """
+    
+    # Define the input as a tensor with shape input_shape
+  X_input = tf.keras.Input(shape=[224, 224, 3])
+
+  if weight_decay == None:
+   kernel_regularizer = None
+  else:
+   kernel_regularizer = tf.keras.regularizers.L2(weight_decay) 
+  
+  if network_depth != None:
+   initial_size = network_depth
+  else: 
+   initial_size = 3 #Defalut size is 3, as the original resnet 50
+
+  starting_size = initial_size  
+  # Zero-Padding
+  X = tf.keras.layers.ZeroPadding2D((3, 3))(X_input)
+    
+  # Stage 1
+  X = tf.keras.layers.Conv2D(64, (7, 7), strides = (2, 2), name = 'conv1', kernel_regularizer=kernel_regularizer)(X)
+  X = tf.keras.layers.BatchNormalization(axis = 3, name = 'bn_conv1')(X)
+  X = tf.keras.layers.Activation('relu')(X)
+  X = tf.keras.layers.MaxPooling2D((3, 3), strides=(2, 2))(X)
+
+  # Stage 2
+  X = convolutional_block(X, f = 3, filters = [64, 64, 256], stage = 2, block='0', s = 1, kernel_regularizer = kernel_regularizer)
+  for i in range(initial_size-1):
+   X = identity_block(X, 3, [64, 64, 256], stage=2, block="a"+str(i), kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [64, 64, 256], stage=2, block='c',kernel_regularizer = kernel_regularizer)
+
+  initial_size = initial_size + 1
+  # Stage 3 
+  X = convolutional_block(X, f = 3, filters = [128, 128, 512], stage = 3, block='1', s = 2, kernel_regularizer = kernel_regularizer)
+  for i in range(initial_size-1):
+   X = identity_block(X, 3, [128, 128, 512], stage=3, block="b"+str(i), kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [128, 128, 512], stage=3, block='c', kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [128, 128, 512], stage=3, block='d', kernel_regularizer = kernel_regularizer)
+   
+  initial_size = (starting_size) * 2 
+  # Stage 4 
+  X = convolutional_block(X, f = 3, filters = [256, 256, 1024], stage = 4, block='a', s = 2, kernel_regularizer = kernel_regularizer)
+  for i in range(initial_size - 1):
+   X = identity_block(X, 3, [256, 256, 1024], stage=4, block='c'+str(i),kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [256, 256, 1024], stage=4, block='c',kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [256, 256, 1024], stage=4, block='d',kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [256, 256, 1024], stage=4, block='e',kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [256, 256, 1024], stage=4, block='f',kernel_regularizer = kernel_regularizer)
+
+  # Stage 5 
+  X = convolutional_block(X, f = 3, filters = [512, 512, 2048], stage = 5, block='2', s = 2, kernel_regularizer = kernel_regularizer)
+  for i in range(starting_size - 1):
+    X = identity_block(X, 3, [512, 512, 2048], stage=5, block='d'+str(i), kernel_regularizer = kernel_regularizer)
+  #X = identity_block(X, 3, [512, 512, 2048], stage=5, block='c', kernel_regularizer = kernel_regularizer)
+
+  # AVGPOOL . Use "X = AveragePooling2D(...)(X)"
+  X = tf.keras.layers.AveragePooling2D()(X)
+
+  # output layer
+  X = tf.keras.layers.Flatten()(X)
+  X = tf.keras.layers.Dense(num_classes, activation='softmax', name='fc' + str(num_classes), kernel_regularizer = kernel_regularizer)(X)
+    
+    
+  # Create model
+  model = tf.keras.Model(inputs = X_input, outputs = X, name='ResNet50')
+
+  return model
+
+def convolutional_block(X, f, filters, stage, block, s = 2, kernel_regularizer = None):
+    """
+    Implementation of the convolutional block
+    
+    Arguments:
+    X -- input tensor of shape (m, n_H_prev, n_W_prev, n_C_prev)
+    f -- integer, specifying the shape of the middle CONV's window for the main path
+    filters -- python list of integers, defining the number of filters in the CONV layers of the main path
+    stage -- integer, used to name the layers, depending on their position in the network
+    block -- string/character, used to name the layers, depending on their position in the network
+    s -- Integer, specifying the stride to be used
+    
+    Returns:
+    X -- output of the convolutional block, tensor of shape (n_H, n_W, n_C)
+    """
+    
+    # defining name basis
+    conv_name_base = 'res' + str(stage) + block + '_branch'
+    bn_name_base = 'bn' + str(stage) + block + '_branch'
+    
+    # Retrieve Filters
+    F1, F2, F3 = filters
+    
+    # Save the input value
+    X_shortcut = X
 
 
-def resnet_v1_50(inputs,
-                 num_classes=None,
-                 is_training=True,
-                 global_pool=True,
-                 output_stride=None,
-                 spatial_squeeze=True,
-                 store_non_strided_activations=False,
-                 reuse=None,
-                 scope='resnet_v1_50'):
-  """ResNet-50 model of [1]. See resnet_v1() for arg and return description."""
-  blocks = [
-      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
-      resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
-      resnet_v1_block('block3', base_depth=256, num_units=6, stride=2),
-      resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
-  ]
-  return resnet_v1(inputs, blocks, num_classes, is_training,
-                   global_pool=global_pool, output_stride=output_stride,
-                   include_root_block=True, spatial_squeeze=spatial_squeeze,
-                   store_non_strided_activations=store_non_strided_activations,
-                   reuse=reuse, scope=scope)
-resnet_v1_50.default_image_size = resnet_v1.default_image_size
+    ##### MAIN PATH #####
+    # First component of main path 
+    X = tf.keras.layers.Conv2D(F1, (1, 1), strides = (s,s), name = conv_name_base + '2a', kernel_regularizer = kernel_regularizer)(X)
+    X = tf.keras.layers.BatchNormalization(axis = 3, name = bn_name_base + '2a')(X)
+    X = tf.keras.layers.Activation('relu')(X)
+    
 
+    # Second component of main path 
+    X = tf.keras.layers.Conv2D(F2, (f,f), strides = (1,1), padding = 'same', name = conv_name_base + '2b', kernel_regularizer = kernel_regularizer)(X)
+    X = tf.keras.layers.BatchNormalization(axis = 3, name = bn_name_base + '2b')(X)
+    X = tf.keras.layers.Activation('relu') (X)
 
-def resnet_v1_101(inputs,
-                  num_classes=None,
-                  is_training=True,
-                  global_pool=True,
-                  output_stride=None,
-                  spatial_squeeze=True,
-                  store_non_strided_activations=False,
-                  reuse=None,
-                  scope='resnet_v1_101'):
-  """ResNet-101 model of [1]. See resnet_v1() for arg and return description."""
-  blocks = [
-      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
-      resnet_v1_block('block2', base_depth=128, num_units=4, stride=2),
-      resnet_v1_block('block3', base_depth=256, num_units=23, stride=2),
-      resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
-  ]
-  return resnet_v1(inputs, blocks, num_classes, is_training,
-                   global_pool=global_pool, output_stride=output_stride,
-                   include_root_block=True, spatial_squeeze=spatial_squeeze,
-                   store_non_strided_activations=store_non_strided_activations,
-                   reuse=reuse, scope=scope)
-resnet_v1_101.default_image_size = resnet_v1.default_image_size
+    # Third component of main path 
+    X = tf.keras.layers.Conv2D(F3, (1,1), strides = (1,1), padding = 'valid', name = conv_name_base + '2c', kernel_regularizer = kernel_regularizer)(X)
+    X = tf.keras.layers.BatchNormalization(axis = 3, name = bn_name_base + '2c')(X)
 
+    ##### SHORTCUT PATH #### 
+    X_shortcut = tf.keras.layers.Conv2D(F3, (1,1), strides = (s,s), padding = 'valid', name = conv_name_base + '1', kernel_regularizer = kernel_regularizer)(X_shortcut)
+    X_shortcut = tf.keras.layers.BatchNormalization(axis = 3, name = bn_name_base + '1')(X_shortcut)
 
-def resnet_v1_152(inputs,
-                  num_classes=None,
-                  is_training=True,
-                  global_pool=True,
-                  output_stride=None,
-                  store_non_strided_activations=False,
-                  spatial_squeeze=True,
-                  reuse=None,
-                  scope='resnet_v1_152'):
-  """ResNet-152 model of [1]. See resnet_v1() for arg and return description."""
-  blocks = [
-      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
-      resnet_v1_block('block2', base_depth=128, num_units=8, stride=2),
-      resnet_v1_block('block3', base_depth=256, num_units=36, stride=2),
-      resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
-  ]
-  return resnet_v1(inputs, blocks, num_classes, is_training,
-                   global_pool=global_pool, output_stride=output_stride,
-                   include_root_block=True, spatial_squeeze=spatial_squeeze,
-                   store_non_strided_activations=store_non_strided_activations,
-                   reuse=reuse, scope=scope)
-resnet_v1_152.default_image_size = resnet_v1.default_image_size
+    # Final step: Add shortcut value to main path, and pass it through a RELU activation 
+    X = tf.keras.layers.Add()([X, X_shortcut])
+    X = tf.keras.layers.Activation('relu')(X)
+    
+    
+    return X
 
+def identity_block(X, f, filters, stage, block, kernel_regularizer = None):
+  """
+  Implementation of the identity block
+  
+  Arguments:
+  X -- input tensor of shape (m, n_H_prev, n_W_prev, n_C_prev)
+  f -- integer, specifying the shape of the middle CONV's window for the main path
+  filters -- python list of integers, defining the number of filters in the CONV layers of the main path
+  stage -- integer, used to name the layers, depending on their position in the network
+  block -- string/character, used to name the layers, depending on their position in the network
+  
+  Returns:
+  X -- output of the identity block, tensor of shape (n_H, n_W, n_C)
+  """
+  
+  # defining name basis
+  conv_name_base = 'res' + str(stage) + block + '_branch'
+  bn_name_base = 'bn' + str(stage) + block + '_branch'
+  
+  # Retrieve Filters
+  F1, F2, F3 = filters
+  
+  # Save the input value. You'll need this later to add back to the main path. 
+  X_shortcut = X
+  
+  # First component of main path
+  X = tf.keras.layers.Conv2D(filters = F1, kernel_size = (1, 1), strides = (1,1), padding = 'valid', name = conv_name_base + '2a', kernel_regularizer = kernel_regularizer)(X)
+  X = tf.keras.layers.BatchNormalization(axis = 3, name = bn_name_base + '2a')(X)
+  X = tf.keras.layers.Activation('relu')(X)
+  
+  
+  # Second component of main path
+  X = tf.keras.layers.Conv2D(filters = F2, kernel_size = (f, f), strides = (1,1), padding = 'same', name = conv_name_base + '2b', kernel_regularizer = kernel_regularizer)(X)
+  X = tf.keras.layers.BatchNormalization(axis = 3, name = bn_name_base + '2b')(X)
+  X = tf.keras.layers.Activation('relu')(X)
 
-def resnet_v1_200(inputs,
-                  num_classes=None,
-                  is_training=True,
-                  global_pool=True,
-                  output_stride=None,
-                  store_non_strided_activations=False,
-                  spatial_squeeze=True,
-                  reuse=None,
-                  scope='resnet_v1_200'):
-  """ResNet-200 model of [2]. See resnet_v1() for arg and return description."""
-  blocks = [
-      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
-      resnet_v1_block('block2', base_depth=128, num_units=24, stride=2),
-      resnet_v1_block('block3', base_depth=256, num_units=36, stride=2),
-      resnet_v1_block('block4', base_depth=512, num_units=3, stride=1),
-  ]
-  return resnet_v1(inputs, blocks, num_classes, is_training,
-                   global_pool=global_pool, output_stride=output_stride,
-                   include_root_block=True, spatial_squeeze=spatial_squeeze,
-                   store_non_strided_activations=store_non_strided_activations,
-                   reuse=reuse, scope=scope)
-resnet_v1_200.default_image_size = resnet_v1.default_image_size
+  # Third component of main path 
+  X = tf.keras.layers.Conv2D(filters = F3, kernel_size = (1, 1), strides = (1,1), padding = 'valid', name = conv_name_base + '2c', kernel_regularizer = kernel_regularizer)(X)
+  X = tf.keras.layers.BatchNormalization(axis = 3, name = bn_name_base + '2c')(X)
+
+  # Final step: Add shortcut value to main path, and pass it through a RELU activation 
+  X = tf.keras.layers.Add()([X, X_shortcut])
+  X = tf.keras.layers.Activation('relu')(X)
+  
+  
+  return X  
+
+resnet_v1_50.default_image_size = 224

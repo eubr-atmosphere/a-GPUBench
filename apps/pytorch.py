@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 """
 Copyright 2018 Marco Lattuada
 
@@ -29,33 +29,49 @@ import xmltodict
 
 import dicttoxml
 
+import app
+
 def compute_parameters(cl_parameters):
-    configuration_base = "default"
-    #First look for configuration
-    for cl_parameter in cl_parameters.split(","):
-        if len(cl_parameter.split("=")) != 2:
-            logging.error("parameters must be a , seperated list of <parameter>=<value>: %s", cl_parameter)
-            sys.exit(1)
-        if cl_parameter.split("=")[0] == "configuration":
-            configuration_base = cl_parameter.split("=")[1]
-            break
+    """
+    Combine the parameters of the single experiment with default values
 
-    #Load configuration
-    parameters = load_xml_configuration(configuration_base + ".xml")["pytorch_configuration"]
+    Parameters
+    ----------
+    cl_parameter: str
+        A comma-separated list of parameter=value characterizing the experiment
 
+    Return
+    ------
+    dict of str: str
+        The dictionary containing the values of all the parameters
+    """
+    parameters = app.load_xml_configuration(cl_parameters, "pytorch", "pytorch_configuration")
     #Overwrite parameters
     for cl_parameter in cl_parameters.split(","):
         tokens = cl_parameter.split("=")
         if len(tokens) != 2:
             logging.error("parameters must be a , seperated list of <parameter>=<value>")
             sys.exit(1)
-        if not tokens[0] in parameters and tokens[0] != "configuration" and tokens[0] != "gpus_number" and tokens[0] != "n" and tokens[0] != "gpus_instances":
-            logging.error("parameter %s is not present in the source configuration", tokens[0])
-            sys.exit(1)
+        #if not tokens[0] in parameters and tokens[0] != "configuration" and tokens[0] != "gpus_number" and tokens[0] != "n" and tokens[0] != "gpus_instances":
+        #    logging.error("parameter %s is not present in the source configuration", tokens[0])
+        #    sys.exit(1)
         parameters[tokens[0]] = tokens[1]
     return parameters
 
 def compute_configuration_name(cl_parameters):
+    """
+    Compute the configuration name on the basis of the values of the experiment parameters
+
+    Parameters
+    ---------
+    cl_parameters: str
+        A comma separated list of parameter=value
+
+    Return
+    ------
+    str
+        The configuration name
+    """
     parameters = compute_parameters(cl_parameters)
     if "gpus_number" in parameters:
         gpus_number = "_gpus_number_" + parameters["gpus_number"]
@@ -75,36 +91,24 @@ def compute_configuration_name(cl_parameters):
     configuration_name = network_type + "_cl_" + parameters["num_classes"] + "_im_" + parameters["images_per_class"] + "_ep_" + parameters["epochs_number"] + "_bs_" + parameters["batch_size"] + "_mo_" + parameters["momentum"] + "_j_" + parameters["j"] + gpus_number + only_load
     return configuration_name
 
-def load_xml_configuration(xml_configuration_file):
-    #The absolute path of the current file
-    abs_script = os.path.realpath(__file__)
-
-    #The root directory of the script
-    abs_root = os.path.dirname(abs_script)
-
-    #The absolute path of the configuration directory
-    confs_dir = os.path.join(abs_root, "pytorch", "confs")
-    logging.info("conf directory is %s", confs_dir)
-
-    #Check the confs_dir exists
-    if not os.path.exists(confs_dir):
-        logging.error("Conf directory %s does not exist", confs_dir)
-        sys.exit(1)
-
-    #Check if xml file of the conf exist
-    xml_file_name = os.path.join(confs_dir, xml_configuration_file)
-    if not os.path.exists(xml_file_name):
-        logging.error("XML file %s not found", xml_file_name)
-        sys.exit(1)
-
-
-    #Load XML file
-    with open(xml_file_name) as xml_file:
-        doc = xmltodict.parse(xml_file.read(), force_list={'input_class'})
-    return doc
-
-
 def collect_data(repetition_path, gpu_type, gpu_number, debug):
+    """
+    Add to csv (and creates it if it does not exist) data about the experiment whose output was saved in repetition_path
+
+    Parameters
+    ----------
+    repetition_path: str
+        The path containing the output of the currently analyzed experiment
+
+    gpu_type: str
+        The type of the GPU
+
+    gpu_number: str
+        The number of the GPUs of the VM
+
+    debug: boolean
+        True if debug messages have to be printed
+    """
     try:
         #The iterations fractions
         iteration_fractions = [0.25, 0.50, 0.75]
@@ -319,10 +323,10 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                 sys.exit(1)
 
         #Preparing csv file with cpu and gpu utilization
-        profile_cpu_output_filename = os.path.join(repetition_path, "profile_cpu_output")
-        profile_gpu_output_filename = os.path.join(repetition_path, "profile_gpu_output")
-        profile_file_name_cpu = os.path.join("pytorch_csvs", "profile_cpu_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
-        profile_file_name_sum_cpu = os.path.join("pytorch_csvs", "profile_sum_cpu_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
+        profile_cpu_output_filename = os.path.join(repetition_path, "profile_CPU_output")
+        profile_gpu_output_filename = os.path.join(repetition_path, "profile_GPU_output")
+        profile_file_name_cpu = os.path.join("pytorch_csvs", "profile_CPU_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
+        profile_file_name_sum_cpu = os.path.join("pytorch_csvs", "profile_sum_CPU_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
         if os.path.exists(profile_cpu_output_filename) and (not os.path.exists(profile_file_name_cpu) or not os.path.exists(profile_file_name_sum_cpu)):
             #The collected data
             cpu_data = {}
@@ -333,10 +337,10 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
             #Analyzing profile_cpu_output
             for line in open(profile_cpu_output_filename, "r"):
                 #New entry
-                if line.find("%cpu %MEM ARGS") != -1:
+                if line.find("%CPU %MEM ARGS") != -1:
                     previous_timestamp = current_timestamp
                     #Old pattern
-                    if line.startswith("%cpu %MEM ARGS"):
+                    if line.startswith("%CPU %MEM ARGS"):
                         split = line.split()
                         if len(split) == 5:
                             read_timestamp = split[3] + " " + split[4][0:7]
@@ -350,7 +354,7 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                             current_timestamp = str(int(current_timestamp_datetime.timestamp()))
                     #New pattern
                     else:
-                        split = line.replace("\\n%cpu %MEM ARGS", "").split()
+                        split = line.replace("\\n%CPU %MEM ARGS", "").split()
                         current_timestamp_readable = split[4] + " " + split[5]
                         current_timestamp = split[1]
                     logging.debug("Found timestamp %s (%s(", current_timestamp, current_timestamp_readable)
@@ -401,8 +405,8 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                 profile_sum_file.write(str(cpu_sum_data["cpu" + str(cpu_number)]))
             profile_sum_file.write("\n")
             profile_sum_file.close()
-        profile_file_name_gpu = os.path.join("pytorch_csvs", "profile_gpu_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
-        profile_file_name_sum_gpu = os.path.join("pytorch_csvs", "profile_sum_gpu_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
+        profile_file_name_gpu = os.path.join("pytorch_csvs", "profile_GPU_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
+        profile_file_name_sum_gpu = os.path.join("pytorch_csvs", "profile_sum_GPU_" + gpu_type.replace(" ", "-") + "_" + str(gpu_number) + "_" + configuration_path + "_" + experiment_path + "_" + str(starting_timestamp) + ".csv")
 
         if os.path.exists(profile_gpu_output_filename) and (not os.path.exists(profile_file_name_gpu) or not os.path.exists(profile_file_name_sum_gpu)):
             #The collected data
@@ -544,10 +548,10 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
             only_load = "0"
 
         #Retrieving machine information
-        #Add host_scripts to the directories for python packages search
+        #Add host_scripts to the directories for python modules search
         host_scripts_path = os.path.join(abs_root, "..", "host_scripts")
         sys.path.append(host_scripts_path)
-        collect_data_package = __import__("collect_data")
+        collect_data_module = __import__("collect_data")
 
         mac_address = ""
         system_uuid = ""
@@ -562,7 +566,7 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
         if xml_configuration.get("system_UUID"):
             system_uuid = xml_configuration.get("system_UUID")
 
-        machine_information = collect_data_package.get_machine_information(mac_address, machine_name, system_uuid)
+        machine_information = collect_data_module.get_machine_information(mac_address, machine_name, system_uuid)
         mac_address = machine_information["mac_address"]
         system_uuid = machine_information["system_uuid"]
         machine_name = machine_information["machine_name"]
@@ -643,11 +647,23 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
         raise
 
 def main():
+    """
+    The wrapper script for training a CNN on ImageNet dataset with PyTorch
+
+    The parameters are:
+        -d, --debug: enables the printing of the debug messages
+        -p, --parameters: a comma-separated list of parameters to be passed to the wrapped application
+        --no-clean: if True, removal of generated files (e.g., dumping of weights) is disabled
+    """
     #The absolute path of the current file
     abs_script = os.path.realpath(__file__)
 
     #The root directory of the script
     abs_root = os.path.dirname(abs_script)
+
+    sys.path.append(os.path.join(abs_root, ".."))
+    utility = __import__("utility")
+
 
     #The return value of the command
     return_value = 0
@@ -841,10 +857,7 @@ def main():
         logging.warning("/etc/machine-id does not exists")
     else:
         uuid_line = open("/etc/machine-id", "r").readline()
-        if len(uuid_line.split()) != 2:
-            logging.error("Error in loading uuid: %s", str(uuid_line.split()))
-            sys.exit(1)
-        uuid = uuid_line.split()[1]
+        uuid = uuid_line
 
         root["system_UUID"] = uuid
 

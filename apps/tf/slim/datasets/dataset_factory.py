@@ -12,26 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""A factory-pattern class which returns classification image/label pairs."""
+"""A factory-pattern class which returns classification image/label pairs.
+
+Currently not all the dataset present in this factory are implemented, but only flowers, vqa_dataset and imagenet
+Due to execution of experiments, I have created 2 imagenet dataset.
+
+Imagenet create the datasets starting from photos in the training directory, instead, Imagenet_records create the dataset
+from TFRecords file.
+"""
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from datasets import cifar10
 from datasets import flowers
 from datasets import imagenet
-from datasets import mnist
+from datasets import vqa_dataset
+from datasets import imagenet_records
+from datasets import vqa_dataset_records
 
 datasets_map = {
-    'cifar10': cifar10,
     'flowers': flowers,
     'imagenet': imagenet,
-    'mnist': mnist,
+    'imagenet_records': imagenet_records,
+    'vqa' : vqa_dataset,
+    'vqa_records': vqa_dataset_records
 }
 
 
-def get_dataset(name, split_name, dataset_dir, file_pattern=None, reader=None, num_classes=None):
+def get_dataset(name, split_name, dataset_dir, seed, batch_size, file_pattern=None, reader=None):
   """Given a dataset name and a split_name returns a Dataset.
 
   Args:
@@ -41,7 +50,6 @@ def get_dataset(name, split_name, dataset_dir, file_pattern=None, reader=None, n
     file_pattern: The file pattern to use for matching the dataset source files.
     reader: The subclass of tf.ReaderBase. If left as `None`, then the default
       reader defined by each dataset is used.
-    num_classes: The number of classes.
 
   Returns:
     A `Dataset` class.
@@ -51,17 +59,10 @@ def get_dataset(name, split_name, dataset_dir, file_pattern=None, reader=None, n
   """
   if name not in datasets_map:
     raise ValueError('Name of dataset unknown %s' % name)
-
-  if num_classes:
-    return datasets_map[name].get_split(
-        split_name,
-        dataset_dir,
-        file_pattern,
-        reader,
-        num_classes=num_classes)
-  else:
-    return datasets_map[name].get_split(
-        split_name,
-        dataset_dir,
-        file_pattern,
-        reader)
+  return datasets_map[name].get_split(
+      split_name,
+      dataset_dir,
+      seed,
+      batch_size,
+      file_pattern,
+      reader)

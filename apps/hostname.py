@@ -18,9 +18,39 @@ import os
 import socket
 
 def compute_configuration_name(cl_parameters):
+    """
+    Compute the configuration name. Since hostname does not take any parameter, there can be only one configuration named "no_parameters"
+
+    Paramters
+    ---------
+    cl_parameters: str
+        Added for generality with respect to other applications.
+
+    Return
+    ------
+    str
+        return "no_parameters"
+    """
     return "no_parameters"
 
 def collect_data(repetition_path, gpu_type, gpu_number, debug):
+    """
+    Add to csv (and creates it if it does not exist) data about the experiment whose output was saved in repetition_path
+
+    Parameters
+    ----------
+    repetition_path: str
+        The path containing the output of the currently analyzed experiment
+
+    gpu_type: str
+        The type of the GPU
+
+    gpu_number: str
+        The number of the GPUs of the VM
+
+    debug: boolean
+        True if debug messages have to be printed
+    """
     csv_file_name = "hostname.csv"
     if os.path.exists(csv_file_name):
         csv_file = open(csv_file_name, "a")

@@ -1,10 +1,11 @@
 # Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 Giovanni Dispoto
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#     http://www.apache.org/licenses/LICENSE-2.0
+# http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -32,6 +33,8 @@ import os
 import random
 import sys
 
+from six.moves import range
+from six.moves import zip
 import tensorflow as tf
 
 from datasets import dataset_utils
@@ -54,18 +57,19 @@ class ImageReader(object):
 
   def __init__(self):
     # Initializes function that decodes RGB JPEG data.
-    self._decode_jpeg_data = tf.placeholder(dtype=tf.string)
-    self._decode_jpeg = tf.image.decode_jpeg(self._decode_jpeg_data, channels=3)
+   # self._decode_jpeg_data =  #tf.placeholder(dtype=tf.string)
+   # self._decode_jpeg = tf.image.decode_jpeg(self._decode_jpeg_data, channels=3)
+   print("init")
 
-  def read_image_dims(self, sess, image_data):
-    image = self.decode_jpeg(sess, image_data)
+  def read_image_dims(self, image_data):
+    image = self.decode_jpeg(image_data)
     return image.shape[0], image.shape[1]
 
-  def decode_jpeg(self, sess, image_data):
-    image = sess.run(self._decode_jpeg,
-                     feed_dict={self._decode_jpeg_data: image_data})
-    assert len(image.shape) == 3
-    assert image.shape[2] == 3
+  def decode_jpeg(self,image_data):
+    image = tf.image.decode_jpeg(image_data, channels=3) #sess.run(self._decode_jpeg, feed_dict={self._decode_jpeg_data: image_data})
+    # assert len(image.shape) == 3
+    # assert image.shape[2] == 3
+    # return image
     return image
 
 
@@ -118,33 +122,32 @@ def _convert_dataset(split_name, filenames, class_names_to_ids, dataset_dir):
 
   num_per_shard = int(math.ceil(len(filenames) / float(_NUM_SHARDS)))
 
-  with tf.Graph().as_default():
-    image_reader = ImageReader()
+  #with tf.Graph().as_default():
+  image_reader = ImageReader()
 
-    with tf.Session('') as sess:
+    #with tf.Session('') as sess:
 
-      for shard_id in range(_NUM_SHARDS):
-        output_filename = _get_dataset_filename(
-            dataset_dir, split_name, shard_id)
+  for shard_id in range(_NUM_SHARDS):
+    output_filename = _get_dataset_filename(
+    dataset_dir, split_name, shard_id)
 
-        with tf.python_io.TFRecordWriter(output_filename) as tfrecord_writer:
-          start_ndx = shard_id * num_per_shard
-          end_ndx = min((shard_id+1) * num_per_shard, len(filenames))
-          for i in range(start_ndx, end_ndx):
-            sys.stdout.write('\r>> Converting image %d/%d shard %d' % (
-                i+1, len(filenames), shard_id))
-            sys.stdout.flush()
+    with tf.io.TFRecordWriter(output_filename) as tfrecord_writer:
+      start_ndx = shard_id * num_per_shard
+      end_ndx = min((shard_id+1) * num_per_shard, len(filenames))
+      for i in range(start_ndx, end_ndx):
+        sys.stdout.write('\r>> Converting image %d/%d shard %d' % (i+1, len(filenames), shard_id))
+        sys.stdout.flush()
 
-            # Read the filename:
-            image_data = tf.gfile.FastGFile(filenames[i], 'rb').read()
-            height, width = image_reader.read_image_dims(sess, image_data)
+        # Read the filename:
+        image_data = tf.io.gfile.GFile(filenames[i], 'rb').read()
+        height, width = image_reader.read_image_dims(image_data)
 
-            class_name = os.path.basename(os.path.dirname(filenames[i]))
-            class_id = class_names_to_ids[class_name]
+        class_name = os.path.basename(os.path.dirname(filenames[i]))
+        class_id = class_names_to_ids[class_name]
 
-            example = dataset_utils.image_to_tfexample(
-                image_data, b'jpg', height, width, class_id)
-            tfrecord_writer.write(example.SerializeToString())
+        example = dataset_utils.image_to_tfexample(
+        image_data, b'jpg', height, width, class_id)
+        tfrecord_writer.write(example.SerializeToString())
 
   sys.stdout.write('\n')
   sys.stdout.flush()
@@ -158,10 +161,10 @@ def _clean_up_temporary_files(dataset_dir):
   """
   filename = _DATA_URL.split('/')[-1]
   filepath = os.path.join(dataset_dir, filename)
-  tf.gfile.Remove(filepath)
+  tf.io.gfile.remove(filepath)
 
   tmp_dir = os.path.join(dataset_dir, 'flower_photos')
-  tf.gfile.DeleteRecursively(tmp_dir)
+  tf.io.gfile.rmtree(tmp_dir)
 
 
 def _dataset_exists(dataset_dir):
@@ -169,7 +172,7 @@ def _dataset_exists(dataset_dir):
     for shard_id in range(_NUM_SHARDS):
       output_filename = _get_dataset_filename(
           dataset_dir, split_name, shard_id)
-      if not tf.gfile.Exists(output_filename):
+      if not tf.io.gfile.exists(output_filename):
         return False
   return True
 
@@ -180,8 +183,8 @@ def run(dataset_dir):
   Args:
     dataset_dir: The dataset directory where the dataset is stored.
   """
-  if not tf.gfile.Exists(dataset_dir):
-    tf.gfile.MakeDirs(dataset_dir)
+  if not tf.io.gfile.exists(dataset_dir):
+    tf.io.gfile.mkdir(dataset_dir)
 
   if _dataset_exists(dataset_dir):
     print('Dataset files already exist. Exiting without re-creating them.')
@@ -189,7 +192,8 @@ def run(dataset_dir):
 
   dataset_utils.download_and_uncompress_tarball(_DATA_URL, dataset_dir)
   photo_filenames, class_names = _get_filenames_and_classes(dataset_dir)
-  class_names_to_ids = dict(zip(class_names, range(len(class_names))))
+  class_names_to_ids = dict(
+      list(zip(class_names, list(range(len(class_names))))))
 
   # Divide into train and test:
   random.seed(_RANDOM_SEED)
@@ -204,7 +208,8 @@ def run(dataset_dir):
                    dataset_dir)
 
   # Finally, write the labels file:
-  labels_to_class_names = dict(zip(range(len(class_names)), class_names))
+  labels_to_class_names = dict(
+      list(zip(list(range(len(class_names))), class_names)))
   dataset_utils.write_label_file(labels_to_class_names, dataset_dir)
 
   _clean_up_temporary_files(dataset_dir)

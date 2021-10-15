@@ -5,11 +5,11 @@ Framework composed of a collection of python script to run, profile and collect 
 The framework can be used with different machines and different applicaitons.
 The target architecture already supported by this version are:
 - inhouse server
-- Microsoft Azure VMs
+- local machine
 
 The application already supported by this version are:
 - CNN training with pytorch
-- CNN training with tensorflow
+- CNN and RNN training with tensorflow
 
 The framework can be configured via .ini configuration file.
 An example of configuration file is available in configurations/default.ini.

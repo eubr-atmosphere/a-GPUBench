@@ -1,4 +1,5 @@
 # Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 Giovanni Dispoto
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,268 +15,339 @@
 # ==============================================================================
 """Generic training script that trains a model using a given dataset."""
 
+
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import os
-import time
-
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
+import tensorflow_addons as tfa
+
+
+from tensorflow.quantization import quantize as contrib_quantize
+
+import argparse
+import os
 
 from datasets import dataset_factory
-from deployment import model_deploy
 from nets import nets_factory
 from preprocessing import preprocessing_factory
+import logging
+import time
+import datetime
 
+parser = argparse.ArgumentParser()
 
-tf.app.flags.DEFINE_string(
-    'master', '', 'The address of the TensorFlow master to use.')
+ 
+parser.add_argument(
+    '--master', default = '', help = 'The address of the TensorFlow master to use.')
 
-tf.app.flags.DEFINE_string(
-    'train_dir', '/tmp/tfmodel/',
-    'Directory where checkpoints and event logs are written to.')
+parser.add_argument(
+    '--warmup_epochs', default = 0, type=int,
+    help = 'Linearly warmup learning rate from 0 to learning_rate over this '
+    'many epochs.')
+parser.add_argument(
+  '--number_of_epochs', default=1, type=int,
+  help= 'Number of epochs'
+)    
 
-tf.app.flags.DEFINE_string(
-    'logdir', '/tmp/tflog/',
-    'Directory where traces are written to.')
+parser.add_argument(
+  '--multiple_gpu', default = False, type = bool, help = 'run training on mulitple gpu'
+)
 
-tf.app.flags.DEFINE_boolean(
-    'trace', False,
-    'Generate traces.')
+parser.add_argument(
+  '--patience', default = None, type = int, help = "Patience before early stopping"
+)
 
-tf.app.flags.DEFINE_integer('num_clones', 1,
-                            'Number of model clones to deploy.')
+parser.add_argument(
+  '--network_depth', default = None, type = int, help = "Depth of the network; Used with variable depth netoworks"
+)
 
-tf.app.flags.DEFINE_boolean('clone_on_cpu', False,
-                            'Use CPUs to deploy clones.')
+parser.add_argument(
+    '--train_dir', default = '/tmp/tfmodel/',
+    help = 'Directory where checkpoints and event logs are written to.')
 
-tf.app.flags.DEFINE_integer('worker_replicas', 1, 'Number of worker replicas.')
+parser.add_argument(
+    '--logdir', default = '/tmp/tflog/',
+    help = 'Directory where traces are written to.')
 
-tf.app.flags.DEFINE_integer(
-    'num_ps_tasks', 0,
-    'The number of parameter servers. If the value is 0, then the parameters '
+parser.add_argument(
+    '--trace', default=   False, type = bool,
+    help = 'Generate traces.')
+
+parser.add_argument('--num_clones',default =  1, type = int,
+                            help = 'Number of model clones to deploy.')
+
+parser.add_argument('--clone_on_cpu', default = False, type = bool,
+                            help = 'Use CPUs to deploy clones.')
+
+parser.add_argument('--worker_replicas', default =  1, type = int, help =  'Number of worker replicas.')
+
+parser.add_argument(
+    '--num_ps_tasks', default = 0, type = int,
+    help = 'The number of parameter servers. If the value is 0, then the parameters '
     'are handled locally by the worker.')
 
-tf.app.flags.DEFINE_integer(
-    'num_readers', 4,
-    'The number of parallel readers that read data from the dataset.')
+parser.add_argument(
+    '--num_readers', default = 4, type = int, 
+    help = 'The number of parallel readers that read data from the dataset.')
 
-tf.app.flags.DEFINE_integer(
-    'num_preprocessing_threads', 4,
-    'The number of threads used to create the batches.')
+parser.add_argument(
+    '--num_preprocessing_threads', default = 4, type = int,
+    help = 'The number of threads used to create the batches.')
 
-tf.app.flags.DEFINE_integer(
-    'log_every_n_steps', 10,
-    'The frequency with which logs are print.')
+parser.add_argument(
+    '--log_every_n_steps', default = 10, type = int,
+    help = 'The frequency with which logs are print.')
 
-tf.app.flags.DEFINE_integer(
-    'save_summaries_secs', 600,
-    'The frequency with which summaries are saved, in seconds.')
+parser.add_argument(
+    '--save_summaries_secs', default = 600, type = int,
+    help = 'The frequency with which summaries are saved, in seconds.')
 
-tf.app.flags.DEFINE_integer(
-    'save_interval_secs', 600,
-    'The frequency with which the model is saved, in seconds.')
+parser.add_argument(
+    '--save_interval_secs',  default = 600, type = int,
+    help = 'The frequency with which the model is saved, in seconds.')
 
-tf.app.flags.DEFINE_integer(
-    'task', 0, 'Task id of the replica running the training.')
+parser.add_argument(
+    '--task', default = 0, type = int, help= 'Task id of the replica running the training.')
 
+parser.add_argument(
+  '--perform_validation', default = False, type = bool, help='Perform evalutation on validation set during training'
+)
+
+parser.add_argument(
+  '--model_out', default = False, help='Directory where to put saved model at the end of the training session'
+)
+
+parser.add_argument(
+  '--seed', default=0, type = int, help =  'seed'
+)
 ######################
 # Optimization Flags #
 ######################
 
-tf.app.flags.DEFINE_float(
-    'weight_decay', 0.00004, 'The weight decay on the model weights.')
+parser.add_argument(
+    '--weight_decay', default = 0.00004, type=float,  help='The weight decay on the model weights.')
+parser.add_argument(
+  '--dropout', default = 0.2, type = float, help = 'Dropout value'
+)    
 
-tf.app.flags.DEFINE_string(
-    'optimizer', 'rmsprop',
-    'The name of the optimizer, one of "adadelta", "adagrad", "adam",'
+parser.add_argument(
+    '--optimizer', default = 'AdamW',
+    help = 'The name of the optimizer, one of "adadelta", "adagrad", "adam",'
     '"ftrl", "momentum", "sgd" or "rmsprop".')
 
-tf.app.flags.DEFINE_float(
-    'adadelta_rho', 0.95,
-    'The decay rate for adadelta.')
+parser.add_argument(
+    '--adadelta_rho', default = 0.95, type = float,
+    help = 'The decay rate for adadelta.')
 
-tf.app.flags.DEFINE_float(
-    'adagrad_initial_accumulator_value', 0.1,
-    'Starting value for the AdaGrad accumulators.')
+parser.add_argument(
+    '--adagrad_initial_accumulator_value',default =  0.1, type = float,
+    help = 'Starting value for the AdaGrad accumulators.')
 
-tf.app.flags.DEFINE_float(
-    'adam_beta1', 0.9,
-    'The exponential decay rate for the 1st moment estimates.')
+parser.add_argument(
+    '--adam_beta1', default = 0.9, type = float,
+    help = 'The exponential decay rate for the 1st moment estimates.')
 
-tf.app.flags.DEFINE_float(
-    'adam_beta2', 0.999,
-    'The exponential decay rate for the 2nd moment estimates.')
+parser.add_argument(
+    '--adam_beta2', default = 0.999, type = float,
+    help = 'The exponential decay rate for the 2nd moment estimates.')
 
-tf.app.flags.DEFINE_float('opt_epsilon', 1.0, 'Epsilon term for the optimizer.')
+parser.add_argument('--opt_epsilon', default = 1.0, type = float, help = 'Epsilon term for the optimizer.')
 
-tf.app.flags.DEFINE_float('ftrl_learning_rate_power', -0.5,
-                          'The learning rate power.')
+parser.add_argument('--ftrl_learning_rate_power', default = -0.5, type = float,
+                         help = 'The learning rate power.')
 
-tf.app.flags.DEFINE_float(
-    'ftrl_initial_accumulator_value', 0.1,
-    'Starting value for the FTRL accumulators.')
+parser.add_argument(
+    '--ftrl_initial_accumulator_value', default =  0.1, type=float,
+    help = 'Starting value for the FTRL accumulators.')
 
-tf.app.flags.DEFINE_float(
-    'ftrl_l1', 0.0, 'The FTRL l1 regularization strength.')
+parser.add_argument(
+    '--ftrl_l1',default= 0.0, type = float, help =  'The FTRL l1 regularization strength.')
 
-tf.app.flags.DEFINE_float(
-    'ftrl_l2', 0.0, 'The FTRL l2 regularization strength.')
+parser.add_argument(
+    '--ftrl_l2', default= 0.0, type=float , help ='The FTRL l2 regularization strength.')
 
-tf.app.flags.DEFINE_float(
-    'momentum', 0.9,
-    'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
+parser.add_argument(
+    '--momentum',default =  0.9, type = float,
+    help = 'The momentum for the MomentumOptimizer and RMSPropOptimizer.')
 
-tf.app.flags.DEFINE_float('rmsprop_momentum', 0.9, 'Momentum.')
+parser.add_argument('--rmsprop_momentum', default = 0.9, type=float, help = 'Momentum.')
 
-tf.app.flags.DEFINE_float('rmsprop_decay', 0.9, 'Decay term for RMSProp.')
+parser.add_argument('--rmsprop_decay', default = 0.9, type=float,help= 'Decay term for RMSProp.')
+
+parser.add_argument(
+    '--quantize_delay', default = -1, type = int,
+    help = 'Number of steps to start quantized training. Set to -1 would disable '
+    'quantized training.')
+parser.add_argument(
+    '--clipvalue', default = 10, type = int,
+    help = 'clipping value used in order to avoid exploding gradient')    
 
 #######################
 # Learning Rate Flags #
 #######################
 
-tf.app.flags.DEFINE_string(
-    'learning_rate_decay_type',
-    'exponential',
-    'Specifies how the learning rate is decayed. One of "fixed", "exponential",'
+parser.add_argument(
+    '--learning_rate_decay_type',
+    default='exponential',
+    help = 'Specifies how the learning rate is decayed. One of "fixed", "exponential",'
     ' or "polynomial"')
 
-tf.app.flags.DEFINE_float('learning_rate', 0.01, 'Initial learning rate.')
+parser.add_argument('--learning_rate', default = 0.01, type = float, help= 'Initial learning rate.')
 
-tf.app.flags.DEFINE_float(
-    'end_learning_rate', 0.0001,
-    'The minimal end learning rate used by a polynomial decay learning rate.')
+parser.add_argument(
+    '--end_learning_rate', default= 0.0001, type=float,
+    help = 'The minimal end learning rate used by a polynomial decay learning rate.')
 
-tf.app.flags.DEFINE_float(
-    'label_smoothing', 0.0, 'The amount of label smoothing.')
+parser.add_argument(
+    '--label_smoothing', default = 0.0, type=float, help = 'The amount of label smoothing.')
 
-tf.app.flags.DEFINE_float(
-    'learning_rate_decay_factor', 0.94, 'Learning rate decay factor.')
+parser.add_argument(
+    '--learning_rate_decay_factor',default= 0.94, type = float, help =  'Learning rate decay factor.')
 
-tf.app.flags.DEFINE_float(
-    'num_epochs_per_decay', 2.0,
-    'Number of epochs after which learning rate decays.')
+parser.add_argument(
+    '--num_epochs_per_decay', default = 2.0, type=float,
+    help = 'Number of epochs after which learning rate decays. Note: this flag counts '
+    'epochs per clone but aggregates per sync replicas. So 1.0 means that '
+    'each clone will go over full epoch individually, but replicas will go '
+    'once across all replicas.')
 
-tf.app.flags.DEFINE_bool(
-    'sync_replicas', False,
-    'Whether or not to synchronize the replicas during training.')
+parser.add_argument(
+    '--sync_replicas', default =  False, type = bool,
+    help = 'Whether or not to synchronize the replicas during training.')
 
-tf.app.flags.DEFINE_integer(
-    'replicas_to_aggregate', 1,
-    'The Number of gradients to collect before updating params.')
+parser.add_argument(
+    '--replicas_to_aggregate', default = 1, type = int,
+    help = 'The Number of gradients to collect before updating params.')
 
-tf.app.flags.DEFINE_float(
-    'moving_average_decay', None,
-    'The decay to use for the moving average.'
+parser.add_argument(
+    '--moving_average_decay', default =  None, type=float,
+    help = 'The decay to use for the moving average.'
     'If left as None, then moving averages are not used.')
 
 #######################
 # Dataset Flags #
 #######################
 
-tf.app.flags.DEFINE_string(
-    'dataset_name', 'imagenet', 'The name of the dataset to load.')
+parser.add_argument(
+    '--dataset_name', default = 'flowers', help = 'The name of the dataset to load.')
 
-tf.app.flags.DEFINE_string(
-    'dataset_split_name', 'train', 'The name of the train/test split.')
+parser.add_argument(
+  '--num_classes', default = 5, type=int, help=" Number of classes in the dataset")    
 
-tf.app.flags.DEFINE_string(
-    'dataset_dir', None, 'The directory where the dataset files are stored.')
+parser.add_argument(
+    '--dataset_split_name', default = 'train', help =  'The name of the train/test split.')
 
-tf.app.flags.DEFINE_integer(
-    'num_classes', 0, 'The number of classes in the dataset.')
+parser.add_argument(
+    '--dataset_dir', default = "/tmp/flowers_2/5", help =  'The directory where the dataset files are stored.')
 
-tf.app.flags.DEFINE_integer(
-    'labels_offset', 0,
-    'An offset for the labels in the dataset. This flag is primarily used to '
+parser.add_argument(
+    '--labels_offset', default = 0, type = int,
+    help = 'An offset for the labels in the dataset. This flag is primarily used to '
     'evaluate the VGG and ResNet architectures which do not use a background '
     'class for the ImageNet dataset.')
 
-tf.app.flags.DEFINE_string(
-    'model_name', 'inception_v3', 'The name of the architecture to train.')
+parser.add_argument(
+    '--model_name', default = 'alexnet_v2', help =  'The name of the architecture to train.')
 
-tf.app.flags.DEFINE_string(
-    'preprocessing_name', None, 'The name of the preprocessing to use. If left '
-                                'as `None`, then the model_name flag is used.')
+parser.add_argument(
+    '--preprocessing_name', default =  None, help = 'The name of the preprocessing to use. If left '
+    'as `None`, then the model_name flag is used.')
 
-tf.app.flags.DEFINE_integer(
-    'batch_size', 32, 'The number of samples in each batch.')
+parser.add_argument(
+    '--batch_size', default= 32, type = int, help =  'The number of samples in each batch.')
 
-tf.app.flags.DEFINE_integer(
-    'train_image_size', None, 'Train image size')
+parser.add_argument(
+    '--train_image_size', default = None, type = int, help =  'Train image size')
 
-tf.app.flags.DEFINE_integer('max_number_of_steps', None,
-                            'The maximum number of training steps.')
+parser.add_argument('--max_number_of_steps', default = None, type = int,
+                            help='The maximum number of training steps.')
+
+parser.add_argument('--use_grayscale', default = False, type = bool,
+                         help = 'Whether to convert input images to grayscale.')
 
 #####################
 # Fine-Tuning Flags #
 #####################
 
-tf.app.flags.DEFINE_string(
-    'checkpoint_path', None,
-    'The path to a checkpoint from which to fine-tune.')
+parser.add_argument(
+    '--checkpoint_path', default= None,
+    help = 'The path to a checkpoint from which to fine-tune.')
 
-tf.app.flags.DEFINE_string(
-    'checkpoint_exclude_scopes', None,
-    'Comma-separated list of scopes of variables to exclude when restoring '
+parser.add_argument(
+    '--checkpoint_exclude_scopes', default = None,
+    help ='Comma-separated list of scopes of variables to exclude when restoring '
     'from a checkpoint.')
 
-tf.app.flags.DEFINE_string(
-    'trainable_scopes', None,
-    'Comma-separated list of scopes to filter the set of variables to train.'
+parser.add_argument(
+    '--trainable_scopes',default =  None,
+    help = 'Comma-separated list of scopes to filter the set of variables to train.'
     'By default, None would train all the variables.')
 
-tf.app.flags.DEFINE_boolean(
-    'ignore_missing_vars', False,
-    'When restoring a checkpoint would ignore missing variables.')
+parser.add_argument(
+    '--ignore_missing_vars', default = False, type = bool,
+    help = 'When restoring a checkpoint would ignore missing variables.')
 
-FLAGS = tf.app.flags.FLAGS
+args = parser.parse_args()
 
-
+#
+# Configuration of the learning rate
+# This code can be reused and adapted 
+#
 def _configure_learning_rate(num_samples_per_epoch, global_step):
-    """Configures the learning rate.
+  """Configures the learning rate.
 
-    Args:
-        num_samples_per_epoch: The number of samples in each epoch of training.
-        global_step: The global_step tensor.
+  Args:
+    num_samples_per_epoch: The number of samples in each epoch of training.
+    global_step: The global_step tensor.
 
-    Returns:
-        A `Tensor` representing the learning rate.
+  Returns:
+    A `Tensor` representing the learning rate.
 
-    Raises:
-        ValueError: if
-    """
-    decay_steps = int(num_samples_per_epoch / FLAGS.batch_size *
-                      FLAGS.num_epochs_per_decay)
-    if FLAGS.sync_replicas:
-        decay_steps /= FLAGS.replicas_to_aggregate
+  Raises:
+    ValueError: if
+  """
+  # Note: when num_clones is > 1, this will actually have each clone to go
+  # over each epoch num_epochs_per_decay times. This is different
+  # behavior from sync replicas and is expected to produce different results.
+  args.steps_per_epoch = num_samples_per_epoch / args.batch_size
+  if args.sync_replicas:
+    args.steps_per_epoch /= args.replicas_to_aggregate
 
-    if FLAGS.learning_rate_decay_type == 'exponential':
-        return tf.train.exponential_decay(FLAGS.learning_rate,
-                                          global_step,
-                                          decay_steps,
-                                          FLAGS.learning_rate_decay_factor,
-                                          staircase=True,
-                                          name='exponential_decay_learning_rate')
-    elif FLAGS.learning_rate_decay_type == 'fixed':
-        return tf.constant(FLAGS.learning_rate, name='fixed_learning_rate')
-    elif FLAGS.learning_rate_decay_type == 'polynomial':
-        return tf.train.polynomial_decay(FLAGS.learning_rate,
-                                         global_step,
-                                         decay_steps,
-                                         FLAGS.end_learning_rate,
-                                         power=1.0,
-                                         cycle=False,
-                                         name='polynomial_decay_learning_rate')
-    else:
-        raise ValueError('learning_rate_decay_type [%s] was not recognized',
-                         FLAGS.learning_rate_decay_type)
+  args.decay_steps = int(args.steps_per_epoch * args.num_epochs_per_decay)
+
+  if args.learning_rate_decay_type == 'exponential':
+    learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(
+        args.learning_rate,
+        args.decay_steps,
+        args.learning_rate_decay_factor,
+        staircase=True,
+        name='exponential_decay_learning_rate')
+  elif args.learning_rate_decay_type == 'fixed':
+    learning_rate = tf.constant(args.learning_rate, name='fixed_learning_rate')
+  elif args.learning_rate_decay_type == 'polynomial':
+    learning_rate = tf.optimizers.schedules.PolynomialDecay(
+        args.learning_rate,
+        args.decay_steps,
+        args.end_learning_rate,
+        power=1.0,
+        cycle=False,
+        name='polynomial_decay_learning_rate')
+  else:
+    raise ValueError('learning_rate_decay_type [%s] was not recognized' %
+                     args.learning_rate_decay_type)
+
+  if args.warmup_epochs:
+    warmup_lr = (
+        learning_rate * tf.cast(global_step, tf.float32) /
+        (args.steps_per_epoch * args.warmup_epochs))
+    learning_rate = tf.minimum(warmup_lr, learning_rate)
+  return learning_rate
 
 
 def _configure_optimizer(learning_rate):
-    """Configures the optimizer used for training.
+  """Configures the optimizer used for training.
 
   Args:
     learning_rate: A scalar or `Tensor` learning rate.
@@ -284,369 +356,174 @@ def _configure_optimizer(learning_rate):
     An instance of an optimizer.
 
   Raises:
-    ValueError: if FLAGS.optimizer is not recognized.
+    ValueError: if optimizer is not recognized.
   """
-    if FLAGS.optimizer == 'adadelta':
-        optimizer = tf.train.AdadeltaOptimizer(
-            learning_rate,
-            rho=FLAGS.adadelta_rho,
-            epsilon=FLAGS.opt_epsilon)
-    elif FLAGS.optimizer == 'adagrad':
-        optimizer = tf.train.AdagradOptimizer(
-            learning_rate,
-            initial_accumulator_value=FLAGS.adagrad_initial_accumulator_value)
-    elif FLAGS.optimizer == 'adam':
-        optimizer = tf.train.AdamOptimizer(
-            learning_rate,
-            beta1=FLAGS.adam_beta1,
-            beta2=FLAGS.adam_beta2,
-            epsilon=FLAGS.opt_epsilon)
-    elif FLAGS.optimizer == 'ftrl':
-        optimizer = tf.train.FtrlOptimizer(
-            learning_rate,
-            learning_rate_power=FLAGS.ftrl_learning_rate_power,
-            initial_accumulator_value=FLAGS.ftrl_initial_accumulator_value,
-            l1_regularization_strength=FLAGS.ftrl_l1,
-            l2_regularization_strength=FLAGS.ftrl_l2)
-    elif FLAGS.optimizer == 'momentum':
-        optimizer = tf.train.MomentumOptimizer(
-            learning_rate,
-            momentum=FLAGS.momentum,
-            name='Momentum')
-    elif FLAGS.optimizer == 'rmsprop':
-        optimizer = tf.train.RMSPropOptimizer(
-            learning_rate,
-            decay=FLAGS.rmsprop_decay,
-            momentum=FLAGS.rmsprop_momentum,
-            epsilon=FLAGS.opt_epsilon)
-    elif FLAGS.optimizer == 'sgd':
-        optimizer = tf.train.GradientDescentOptimizer(learning_rate)
-    else:
-        raise ValueError('Optimizer [%s] was not recognized', FLAGS.optimizer)
-    return optimizer
-
-
-def _get_init_fn():
-    """Returns a function run by the chief worker to warm-start the training.
-
-  Note that the init_fn is only run when initializing the model during the very
-  first global step.
-
-  Returns:
-    An init function run by the supervisor.
-  """
-    if FLAGS.checkpoint_path is None:
-        return None
-
-    # Warn the user if a checkpoint exists in the train_dir. Then we'll be
-    # ignoring the checkpoint anyway.
-    if tf.train.latest_checkpoint(FLAGS.train_dir):
-        tf.logging.info(
-            'Ignoring --checkpoint_path because a checkpoint already exists in %s'
-            % FLAGS.train_dir)
-        return None
-
-    exclusions = []
-    if FLAGS.checkpoint_exclude_scopes:
-        exclusions = [scope.strip()
-                      for scope in FLAGS.checkpoint_exclude_scopes.split(',')]
-
-    # TODO(sguada) variables.filter_variables()
-    variables_to_restore = []
-    for var in slim.get_model_variables():
-        excluded = False
-        for exclusion in exclusions:
-            if var.op.name.startswith(exclusion):
-                excluded = True
-                break
-        if not excluded:
-            variables_to_restore.append(var)
-
-    if tf.gfile.IsDirectory(FLAGS.checkpoint_path):
-        checkpoint_path = tf.train.latest_checkpoint(FLAGS.checkpoint_path)
-    else:
-        checkpoint_path = FLAGS.checkpoint_path
-
-    tf.logging.info('Fine-tuning from %s' % checkpoint_path)
-
-    return slim.assign_from_checkpoint_fn(
-        checkpoint_path,
-        variables_to_restore,
-        ignore_missing_vars=FLAGS.ignore_missing_vars)
-
-
-def _get_variables_to_train():
-    """Returns a list of variables to train.
-
-  Returns:
-    A list of variables to train by the optimizer.
-  """
-    if FLAGS.trainable_scopes is None:
-        return tf.trainable_variables()
-    else:
-        scopes = [scope.strip() for scope in FLAGS.trainable_scopes.split(',')]
-
-    variables_to_train = []
-    for scope in scopes:
-        variables = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope)
-        variables_to_train.extend(variables)
-    return variables_to_train
-
-
-def _train_step(sess: tf.Session, train_op, global_step, train_step_kwargs):
-  """Function that takes a gradient step and specifies whether to stop.
-
-  Args:
-    sess: The current session.
-    train_op: An `Operation` that evaluates the gradients and returns the
-      total loss.
-    global_step: A `Tensor` representing the global training step.
-    train_step_kwargs: A dictionary of keyword arguments.
-
-  Returns:
-    The total loss and a boolean indicating whether or not to stop training.
-
-  Raises:
-    ValueError: if 'should_trace' is in `train_step_kwargs` but `logdir` is not.
-  """
-  start_time = time.time()
-
-  trace_run_options = None
-  run_metadata = None
-
-  if FLAGS.trace:
-      trace_run_options = slim.learning.config_pb2.RunOptions(
-          trace_level=slim.learning.config_pb2.RunOptions.FULL_TRACE
-      )
-      run_metadata = slim.learning.config_pb2.RunMetadata()
-
-  total_loss, np_global_step = sess.run([train_op, global_step],
-                                        options=trace_run_options,
-                                        run_metadata=run_metadata)
-  time_elapsed = time.time() - start_time
-
-  if run_metadata is not None:
-    tl = slim.learning.timeline.Timeline(run_metadata.step_stats)
-    trace = tl.generate_chrome_trace_format()
-    trace_filename = os.path.join(FLAGS.logdir,
-                                  'tf_trace-%d.json' % np_global_step)
-    slim.learning.logging.info('Writing trace to %s', trace_filename)
-    slim.learning.file_io.write_string_to_file(trace_filename, trace)
-    if 'summary_writer' in train_step_kwargs:
-      train_step_kwargs['summary_writer'].add_run_metadata(run_metadata,
-                                                           'run_metadata-%d' %
-                                                           np_global_step)
-
-  if 'should_log' in train_step_kwargs:
-    if sess.run(train_step_kwargs['should_log']):
-        slim.learning.logging.info('global step %d: loss = %.4f (%.3f sec/step)',
-                   np_global_step, total_loss, time_elapsed)
-
-  if 'should_stop' in train_step_kwargs:
-    should_stop = sess.run(train_step_kwargs['should_stop'])
+  if args.optimizer == 'adadelta':
+    optimizer = tf.keras.optimizers.Adadelta(
+        learning_rate,
+        rho=args.adadelta_rho,
+        epsilon=args.opt_epsilon,
+        clipvalue= args.clipvalue)
+  elif args.optimizer == 'adagrad':
+    optimizer = tf.keras.optimizers.Adagrad(
+        learning_rate,
+        initial_accumulator_value=args.adagrad_initial_accumulator_value,
+        clipvalue= args.clipvalue)
+  elif args.optimizer == 'adam':
+    optimizer = tf.keras.optimizers.Adam(
+        learning_rate,
+        beta_1=args.adam_beta1,
+        beta_2=args.adam_beta2,
+        epsilon=args.opt_epsilon,
+        clipvalue= args.clipvalue)
+  elif args.optimizer == "AdamW":
+    optimizer = tfa.optimizers.AdamW(args.weight_decay,
+        learning_rate=learning_rate,
+        beta_1 = args.adam_beta1,
+        beta_2 = args.adam_beta2,
+        epsilon = args.opt_epsilon,
+        clipvalue= args.clipvalue)      
+  elif args.optimizer == 'ftrl':
+    optimizer = tf.keras.optimizers.Ftrl(
+        learning_rate,
+        learning_rate_power=args.ftrl_learning_rate_power,
+        initial_accumulator_value=args.ftrl_initial_accumulator_value,
+        l1_regularization_strength=args.ftrl_l1,
+        l2_regularization_strength=args.ftrl_l2,
+        clipvalue= args.clipvalue)
+  elif args.optimizer == 'momentum':
+    optimizer = tf.keras.optimizers.SGD(
+        learning_rate,
+        momentum=args.momentum,
+        name='Momentum',
+        clipvalue= args.clipvalue)
+  elif args.optimizer == 'rmsprop':
+    optimizer = tf.keras.optimizers.RMSprop(
+        learning_rate,
+        decay=args.rmsprop_decay,
+        momentum=args.rmsprop_momentum,
+        epsilon=args.opt_epsilon,
+        clipvalue= args.clipvalue)
+  elif args.optimizer == 'sgd':
+    optimizer = tf.keras.optimizers.SGD(learning_rate, clipvalue= args.clipvalue)
   else:
-    should_stop = False
+    raise ValueError('Optimizer [%s] was not recognized' % optimizer)  
+  return optimizer
 
-  return total_loss, should_stop
+
+def main():
+  if not args.dataset_dir:
+    raise ValueError('You must supply the dataset directory with --dataset_dir')
+  if not args.model_out:
+    raise ValueError('You must supply where put saved model with --model_out') 
+  if args.patience != None and args.perform_validation == False:
+    raise ValueError("Patience is setted, but validation is set to False")  
+
+  if(args.network_depth == -1):
+    args.network_depth = None   
+
+  logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+  global_step = tf.Variable(1, name="global_step")
+
+  ######################
+  # Select the dataset #
+  ######################
+  num_classes, num_samples, num_validation_samples, training_set, validation_set = dataset_factory.get_dataset(
+      args.dataset_name, args.dataset_split_name, args.dataset_dir, args.seed, args.batch_size)
+  
+
+  
+  ######################
+  # Select the network #
+  ######################
+  network_fn = nets_factory.get_network_fn(
+      args.model_name,
+      num_classes=(num_classes - args.labels_offset),
+      weight_decay=args.weight_decay,
+      is_training=True,
+      network_depth = args.network_depth)
+
+  #####################################
+  # Select the preprocessing function #
+  #####################################
+  preprocessing_name = args.preprocessing_name or args.model_name
+  image_preprocessing_fn = preprocessing_factory.get_preprocessing(
+      preprocessing_name,
+      is_training=True)
+
+  if image_preprocessing_fn != None:
+   logging.info("Apply preprocessing function") 
+   training_set = training_set.map(lambda x, y: (image_preprocessing_fn(x), y))
+
+  #########################################
+  # Configure the optimization procedure. #
+  #########################################
+  
+  learning_rate = _configure_learning_rate(num_samples, global_step)
+
+  opt = _configure_optimizer(learning_rate)
+  
+  loss = tf.keras.losses.CategoricalCrossentropy() 
 
 
-def main(_):
-    if not FLAGS.dataset_dir:
-        raise ValueError('You must supply the dataset directory with --dataset_dir')
+  ###########################
+  # Kicks off the training. #
+  ###########################
+  
+  #callbacks to pass to fit
+  callbacks = []
+  
+  #Append TimeCallback used to print iterations
+  callbacks.append(TimeCallback())
+  
+  network_fn.compile(optimizer=opt, loss = loss, metrics=["accuracy"])
+  
+  #If patience is set, add the early stopping callback to fit 
+  #Default restoring best weights
+  if args.patience != None:
+    if args.dataset_name != "vqa":
+     callbacks.append(tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=args.patience, restore_best_weights = True))
+    else:
+     #Setting min delta to 0.01 in order to speedup the training of vqa model 
+     callbacks.append(tf.keras.callbacks.EarlyStopping(monitor='val_loss', min_delta = 0.01, patience=args.patience, restore_best_weights = True)) 
+  #network_fn.summary()
 
-    tf.logging.set_verbosity(tf.logging.DEBUG)
-    with tf.Graph().as_default():
-        #######################
-        # Config model_deploy #
-        #######################
-        deploy_config = model_deploy.DeploymentConfig(
-            num_clones=FLAGS.num_clones,
-            clone_on_cpu=FLAGS.clone_on_cpu,
-            replica_id=FLAGS.task,
-            num_replicas=FLAGS.worker_replicas,
-            num_ps_tasks=FLAGS.num_ps_tasks
-        )
+  if args.perform_validation == True:
+      logging.info("Performing validation")
+      history = network_fn.fit(x = training_set, validation_data = validation_set, validation_steps = int(num_validation_samples/args.batch_size) , epochs=args.number_of_epochs, verbose=0, callbacks=callbacks, steps_per_epoch=int(num_samples/args.batch_size), batch_size = args.batch_size)
+  else: 
+      logging.info("Start training")
+      history = network_fn.fit(x = training_set, epochs=args.number_of_epochs, verbose=0, callbacks=callbacks, steps_per_epoch=int(num_samples/args.batch_size), batch_size = args.batch_size)
+  #print(min(int(num_samples//args.batch_size), args.max_number_of_steps))
+  
+  #save weights of the model on the disk
+  logging.info("Saving weight of the model on " + args.model_out) 
+  network_fn.save_weights(os.path.join(args.model_out, args.model_name+"_"+args.dataset_name+"_"+str(args.batch_size)+"_"+str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))+"/"+"weights_ckp"))
+  logging.info("Weights saved") 
+  
+# Define a custom callback to pass into fit in order to print loss and step time
+class TimeCallback(tf.keras.callbacks.Callback):
+ def on_train_batch_end(self, batch, logs=None):
+  #keys = list(logs.keys())
+  curr_step = (self.epoch_number * self.params['steps']) + batch+1
+  logging.info("tensorflow:global step {0}: loss = {1:.4f} ({2:.3f} sec/step)".format(curr_step, logs['loss'], time.time() - self.start))
 
-        # Create global_step
-        with tf.device(deploy_config.variables_device()):
-            global_step = tf.train.create_global_step()
 
-        ######################
-        # Select the dataset #
-        ######################
-        dataset = dataset_factory.get_dataset(
-            FLAGS.dataset_name, FLAGS.dataset_split_name, FLAGS.dataset_dir, num_classes=FLAGS.num_classes)
+ # save timestamp of when start training on batch in order to compute the time needed
+ def on_train_batch_begin(self, batch, logs=None):
+  self.start = time.time()
+  
+ #save epoch number in order to determin global INFO: : p 
+ def on_epoch_begin(self, epoch, logs=None):
+   self.epoch_number = epoch
 
-        ######################
-        # Select the network #
-        ######################
-        network_fn = nets_factory.get_network_fn(
-            FLAGS.model_name,
-            num_classes=(FLAGS.num_classes - FLAGS.labels_offset),
-            weight_decay=FLAGS.weight_decay,
-            is_training=True)
+ #Logs loss and accuracy of the model on the validation set
+ def on_test_end(self, logs=None): 
+  logging.info("tensorflow: evaluation on validation set: loss = {0:.4f}, accuracy = {1:.4f}".format(logs['loss'], logs['accuracy']))
 
-        #####################################
-        # Select the preprocessing function #
-        #####################################
-        preprocessing_name = FLAGS.preprocessing_name or FLAGS.model_name
-        image_preprocessing_fn = preprocessing_factory.get_preprocessing(
-            preprocessing_name,
-            is_training=True)
 
-        ##############################################################
-        # Create a dataset provider that loads data from the dataset #
-        ##############################################################
-        with tf.device(deploy_config.inputs_device()):
-            provider = slim.dataset_data_provider.DatasetDataProvider(
-                dataset,
-                num_readers=FLAGS.num_readers,
-                common_queue_capacity=20 * FLAGS.batch_size,
-                common_queue_min=10 * FLAGS.batch_size)
-            [image, label] = provider.get(['image', 'label'])
-            label -= FLAGS.labels_offset
 
-            train_image_size = FLAGS.train_image_size or network_fn.default_image_size
-
-            image = image_preprocessing_fn(image, train_image_size, train_image_size)
-
-            images, labels = tf.train.batch(
-                [image, label],
-                batch_size=FLAGS.batch_size,
-                num_threads=FLAGS.num_preprocessing_threads,
-                capacity=5 * FLAGS.batch_size)
-            labels = slim.one_hot_encoding(
-                labels, dataset.num_classes - FLAGS.labels_offset)
-            batch_queue = slim.prefetch_queue.prefetch_queue(
-                [images, labels], capacity=2 * deploy_config.num_clones)
-
-        ####################
-        # Define the model #
-        ####################
-        def clone_fn(batch_queue):
-            """Allows data parallelism by creating multiple clones of network_fn."""
-            images, labels = batch_queue.dequeue()
-            logits, end_points = network_fn(images)
-
-            #############################
-            # Specify the loss function #
-            #############################
-            if 'AuxLogits' in end_points:
-                tf.losses.softmax_cross_entropy(
-                    labels, end_points['AuxLogits'],
-                    label_smoothing=FLAGS.label_smoothing, weights=0.4,
-                    scope='aux_loss')
-
-            tf.losses.softmax_cross_entropy(
-                labels, logits, label_smoothing=FLAGS.label_smoothing, weights=1.0)
-            return end_points
-
-        # Gather initial summaries.
-        summaries = set(tf.get_collection(tf.GraphKeys.SUMMARIES))
-
-        clones = model_deploy.create_clones(deploy_config, clone_fn, [batch_queue])
-        first_clone_scope = deploy_config.clone_scope(0)
-        # Gather update_ops from the first clone. These contain, for example,
-        # the updates for the batch_norm variables created by network_fn.
-        update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, first_clone_scope)
-
-        # Add summaries for end_points.
-        end_points = clones[0].outputs
-        for end_point in end_points:
-            x = end_points[end_point]
-            summaries.add(tf.summary.histogram('activations/' + end_point, x))
-            summaries.add(tf.summary.scalar('sparsity/' + end_point,
-                                            tf.nn.zero_fraction(x)))
-
-        # Add summaries for losses.
-        for loss in tf.get_collection(tf.GraphKeys.LOSSES, first_clone_scope):
-            summaries.add(tf.summary.scalar('losses/%s' % loss.op.name, loss))
-
-        # Add summaries for variables.
-        for variable in slim.get_model_variables():
-            summaries.add(tf.summary.histogram(variable.op.name, variable))
-
-        #################################
-        # Configure the moving averages #
-        #################################
-        if FLAGS.moving_average_decay:
-            moving_average_variables = slim.get_model_variables()
-            variable_averages = tf.train.ExponentialMovingAverage(
-                FLAGS.moving_average_decay, global_step)
-        else:
-            moving_average_variables, variable_averages = None, None
-
-        #########################################
-        # Configure the optimization procedure. #
-        #########################################
-        with tf.device(deploy_config.optimizer_device()):
-            learning_rate = _configure_learning_rate(dataset.num_samples, global_step)
-            optimizer = _configure_optimizer(learning_rate)
-            summaries.add(tf.summary.scalar('learning_rate', learning_rate))
-
-        if FLAGS.sync_replicas:
-            # If sync_replicas is enabled, the averaging will be done in the chief
-            # queue runner.
-            optimizer = tf.train.SyncReplicasOptimizer(
-                opt=optimizer,
-                replicas_to_aggregate=FLAGS.replicas_to_aggregate,
-                total_num_replicas=FLAGS.worker_replicas,
-                variable_averages=variable_averages,
-                variables_to_average=moving_average_variables)
-        elif FLAGS.moving_average_decay:
-            # Update ops executed locally by trainer.
-            update_ops.append(variable_averages.apply(moving_average_variables))
-
-        # Variables to train.
-        variables_to_train = _get_variables_to_train()
-
-        #  and returns a train_tensor and summary_op
-        total_loss, clones_gradients = model_deploy.optimize_clones(
-            clones,
-            optimizer,
-            var_list=variables_to_train)
-        # Add total_loss to summary.
-        summaries.add(tf.summary.scalar('total_loss', total_loss))
-
-        # Create gradient updates.
-        grad_updates = optimizer.apply_gradients(clones_gradients,
-                                                 global_step=global_step)
-        update_ops.append(grad_updates)
-
-        update_op = tf.group(*update_ops)
-        with tf.control_dependencies([update_op]):
-            train_tensor = tf.identity(total_loss, name='train_op')
-
-        # Add the summaries from the first clone. These contain the summaries
-        # created by model_fn and either optimize_clones() or _gather_clone_loss().
-        summaries |= set(tf.get_collection(tf.GraphKeys.SUMMARIES,
-                                           first_clone_scope))
-
-        # Merge all summaries together.
-        summary_op = tf.summary.merge(list(summaries), name='summary_op')
-
-        # Add config to avoid 'could not satisfy explicit device' problem
-        sess_config = tf.ConfigProto(allow_soft_placement=True)
-
-        ###########################
-        # Kicks off the training. #
-        ###########################
-        slim.learning.train(
-            train_tensor,
-            train_step_fn=_train_step,
-            logdir=FLAGS.train_dir,
-            master=FLAGS.master,
-            is_chief=(FLAGS.task == 0),
-            init_fn=_get_init_fn(),
-            summary_op=summary_op,
-            number_of_steps=FLAGS.max_number_of_steps,
-            log_every_n_steps=FLAGS.log_every_n_steps,
-            save_summaries_secs=FLAGS.save_summaries_secs,
-            save_interval_secs=FLAGS.save_interval_secs,
-            sync_optimizer=optimizer if FLAGS.sync_replicas else None,
-            session_config=sess_config
-        )
 
 
 if __name__ == '__main__':
-    tf.app.run()
+  main()

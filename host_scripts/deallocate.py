@@ -23,10 +23,20 @@ import subprocess
 import sys
 import time
 
+"""
+Script used to deallocate a Microsoft Azure VM
+
+The script deallocates a specific Microsoft Azure VM
+Arguments of the scripts are:
+    --mail: the mail address to which the notification must be sent
+    --name: the name of the VM to be deallocated
+    -s, --subscription: the subscription to which the VM belongs
+"""
+
 logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
 
 parser = argparse.ArgumentParser(description="Deallocate all stopped VMs and wait for deallocating a specific VM")
-parser.add_argument("--mail", help="The mail address to which end notification must be sent")
+parser.add_argument("--mail", help="The mail address to which the notification must be sent")
 parser.add_argument("--name", help="The name of the VM to be waited", required=True)
 parser.add_argument("-s", "--subscription", help="The Azure subscription to be used")
 
@@ -35,7 +45,7 @@ args = parser.parse_args()
 #The absolute path of the current script
 abs_script = os.path.abspath(sys.argv[0])
 
-#The root direcotry of the script
+#The root directory of the script
 abs_root = os.path.dirname(abs_script)
 
 sys.path.append(os.path.join(abs_root, "..", "providers", "azure"))

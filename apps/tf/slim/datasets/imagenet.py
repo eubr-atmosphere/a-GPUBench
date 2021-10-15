@@ -1,4 +1,5 @@
 # Copyright 2016 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2021 Giovanni Dispoto
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,18 +36,21 @@ from __future__ import print_function
 import os
 from six.moves import urllib
 import tensorflow as tf
+from PIL import Image
+import numpy as np 
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 
 from datasets import dataset_utils
-
-slim = tf.contrib.slim
 
 # TODO(nsilberman): Add tfrecord file type once the script is updated.
 _FILE_PATTERN = '%s-*'
 
 _SPLITS_TO_SIZES = {
-    'train': 1281167,
-    'validation': 50000,
+    'train': 12000,
+    'validation': 500,
 }
+
+_NUM_SAMPLES = _SPLITS_TO_SIZES['train'] + _SPLITS_TO_SIZES['validation']
 
 _ITEMS_TO_DESCRIPTIONS = {
     'image': 'A color image of varying height and width.',
@@ -56,7 +60,11 @@ _ITEMS_TO_DESCRIPTIONS = {
     'object/label': 'A list of labels, one per each object.',
 }
 
-_NUM_CLASSES = 1001
+_NUM_CLASSES = 10
+
+# If set to false, will not try to set label_to_names in dataset
+# by reading them from labels.txt or github.
+LOAD_READABLE_NAMES = True
 
 
 def create_readable_names_for_imagenet_labels():
@@ -83,11 +91,11 @@ def create_readable_names_for_imagenet_labels():
   """
 
   # pylint: disable=g-line-too-long
-  base_url = 'https://raw.githubusercontent.com/tensorflow/models/master/research/inception/inception/data/'
+  base_url = 'https://raw.githubusercontent.com/tensorflow/models/master/research/slim/datasets/'
   synset_url = '{}/imagenet_lsvrc_2015_synsets.txt'.format(base_url)
   synset_to_human_url = '{}/imagenet_metadata.txt'.format(base_url)
 
-  filename, _ = urllib.request.urlretrieve(synset_url)
+  filename, _ = urllib.request.urlretrinpeve(synset_url)
   synset_list = [s.strip() for s in open(filename).readlines()]
   num_synsets_in_ilsvrc = len(synset_list)
   assert num_synsets_in_ilsvrc == 1000
@@ -114,8 +122,30 @@ def create_readable_names_for_imagenet_labels():
 
   return labels_to_names
 
+def split_dataset(dataset: tf.data.Dataset, validation_data_fraction: float):
+    """
+    Splits a dataset of type tf.data.Dataset into a training and validation dataset using given ratio. Fractions are
+    rounded up to two decimal places.
+    @param dataset: the input dataset to split.
+    @param validation_data_fraction: the fraction of the validation data as a float between 0 and 1.
+    @return: a tuple of two tf.data.Datasets as (training, validation)
+    """
 
-def get_split(split_name, dataset_dir, file_pattern=None, reader=None, num_classes=None):
+    validation_data_percent = round(validation_data_fraction * 100)
+    if not (0 <= validation_data_percent <= 100):
+        raise ValueError("validation data fraction must be ∈ [0,1]")
+
+    dataset = dataset.enumerate()
+    train_dataset = dataset.filter(lambda f, data: f % 100 > validation_data_percent)
+    validation_dataset = dataset.filter(lambda f, data: f % 100 <= validation_data_percent)
+
+    # remove enumeration
+    train_dataset = train_dataset.map(lambda f, data: data)
+    validation_dataset = validation_dataset.map(lambda f, data: data)
+
+    return train_dataset, validation_dataset
+
+def get_split(split_name, dataset_dir, seed, batch_size, file_pattern=None, reader=None,):
   """Gets a dataset tuple with instructions for reading ImageNet.
 
   Args:
@@ -125,7 +155,6 @@ def get_split(split_name, dataset_dir, file_pattern=None, reader=None, num_class
       It is assumed that the pattern contains a '%s' string so that the split
       name can be inserted.
     reader: The TensorFlow reader type.
-    num_classes: The number of classes.
 
   Returns:
     A `Dataset` namedtuple.
@@ -139,56 +168,92 @@ def get_split(split_name, dataset_dir, file_pattern=None, reader=None, num_class
   if not file_pattern:
     file_pattern = _FILE_PATTERN
   file_pattern = os.path.join(dataset_dir, file_pattern % split_name)
+  
+  training_dir = os.path.join(dataset_dir, '../raw-data/train')
 
-  # Allowing None in the signature so that dataset_factory can use the default.
-  if reader is None:
-    reader = tf.TFRecordReader
+  validation_dir = os.path.join(dataset_dir, '../raw-data/val')
 
-  keys_to_features = {
-      'image/encoded': tf.FixedLenFeature(
-          (), tf.string, default_value=''),
-      'image/format': tf.FixedLenFeature(
-          (), tf.string, default_value='jpeg'),
-      'image/class/label': tf.FixedLenFeature(
-          [], dtype=tf.int64, default_value=-1),
-      'image/class/text': tf.FixedLenFeature(
-          [], dtype=tf.string, default_value=''),
-      'image/object/bbox/xmin': tf.VarLenFeature(
-          dtype=tf.float32),
-      'image/object/bbox/ymin': tf.VarLenFeature(
-          dtype=tf.float32),
-      'image/object/bbox/xmax': tf.VarLenFeature(
-          dtype=tf.float32),
-      'image/object/bbox/ymax': tf.VarLenFeature(
-          dtype=tf.float32),
-      'image/object/class/label': tf.VarLenFeature(
-          dtype=tf.int64),
-  }
+  train_data_gen = ImageDataGenerator(rescale = 1./255)                                       
 
-  items_to_handlers = {
-      'image': slim.tfexample_decoder.Image('image/encoded', 'image/format'),
-      'label': slim.tfexample_decoder.Tensor('image/class/label'),
-      'label_text': slim.tfexample_decoder.Tensor('image/class/text'),
-      'object/bbox': slim.tfexample_decoder.BoundingBox(
-          ['ymin', 'xmin', 'ymax', 'xmax'], 'image/object/bbox/'),
-      'object/label': slim.tfexample_decoder.Tensor('image/object/class/label'),
-  }
+  valid_data_gen = ImageDataGenerator(rescale = 1./255)
 
-  decoder = slim.tfexample_decoder.TFExampleDecoder(
-      keys_to_features, items_to_handlers)
+  train_gen = train_data_gen.flow_from_directory(training_dir,
+                                               target_size=(224, 224),
+                                               class_mode='categorical',
+                                               color_mode='rgb',
+                                               batch_size=batch_size,
+                                               shuffle=True,
+                                               seed=seed)
 
-  labels_to_names = None
-  if dataset_utils.has_labels(dataset_dir):
-    labels_to_names = dataset_utils.read_label_file(dataset_dir)
-  else:
-    labels_to_names = create_readable_names_for_imagenet_labels()
-    dataset_utils.write_label_file(labels_to_names, dataset_dir)
+  validation_gen = valid_data_gen.flow_from_directory(validation_dir,
+                                               target_size=(224, 224),
+                                               class_mode='categorical',
+                                               color_mode='rgb',
+                                               batch_size = batch_size,
+                                               shuffle=True,
+                                               seed=seed)
 
-  return slim.dataset.Dataset(
-      data_sources=file_pattern,
-      reader=reader,
-      decoder=decoder,
-      num_samples=_SPLITS_TO_SIZES[split_name],
-      items_to_descriptions=_ITEMS_TO_DESCRIPTIONS,
-      num_classes=_NUM_CLASSES if not num_classes else num_classes,
-      labels_to_names=labels_to_names)
+  train_dataset = tf.data.Dataset.from_generator(lambda: train_gen,
+                                               output_types=(tf.float32, tf.float32),
+                                               output_shapes=([None,224, 224, 3], [None,_NUM_CLASSES]))
+
+
+  validation_dataset = tf.data.Dataset.from_generator(lambda: validation_gen,
+                                               output_types=(tf.float32, tf.float32),
+                                               output_shapes=([None, 224, 224, 3], [None,_NUM_CLASSES]))
+
+                                             
+  
+  #train_dataset = train_dataset.shuffle(2048, seed = seed)
+
+  train_dataset = train_dataset.prefetch(buffer_size = tf.data.experimental.AUTOTUNE)
+
+  validation_dataset = validation_dataset.shuffle(500, seed = seed)
+
+  validation_dataset = validation_dataset.prefetch(buffer_size = tf.data.experimental.AUTOTUNE)
+
+  train_dataset = train_dataset.repeat()
+  validation_dataset = validation_dataset.repeat()
+
+
+  #train_dataset, validation_dataset = split_dataset(parsed_image_dataset, _SPLITS_TO_SIZES['validation']/_SPLITS_TO_SIZES['train']  )
+
+
+
+
+  #parsed_image_dataset = parsed_image_dataset.repeat()
+
+  #parsed_image_dataset
+
+  #for class_id in parsed_image_dataset.take(10):
+  # print(class_id['image/width'])
+  # image = tf.image.decode_jpeg(class_id['image/encoded'], channels=3)
+  # image = tf.cast(image, tf.float32)
+  # image = tf.reshape(image, [class_id['image/width'],class_id['image/height'], 3])
+  # images.append(tf.random.uniform(shape=[32, 224,224,3]))
+
+   
+  #image, label = next(iter(parsed_image_dataset))
+  #print(image)
+  #print(label)
+
+  #img = Image.fromarray(np.uint8(image))
+  #img = img.resize([224,224])
+
+  #img.show()
+
+  #exit()
+
+  return _NUM_CLASSES, _SPLITS_TO_SIZES['train'],_SPLITS_TO_SIZES['validation'], train_dataset, validation_dataset
+
+#Returns the size of training set and validation set
+def get_split_size():
+    return SPLITS_TO_SIZES['train'],SPLITS_TO_SIZES['validation']
+  #labels_to_names = None
+  #if LOAD_READABLE_NAMES:
+  #  if dataset_utils.has_labels(dataset_dir):
+  #    labels_to_names = dataset_utils.read_label_file(dataset_dir)
+  #  else:
+  #    labels_to_names = create_readable_names_for_imagenet_labels()
+  #    dataset_utils.write_label_file(labels_to_names, dataset_dir)
+

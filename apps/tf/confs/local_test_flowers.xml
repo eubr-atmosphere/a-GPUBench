@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tensorflow_configuration>
+    <input_classes>
+        <local_path>/data/dataset/flowers/raw-data</local_path>
+        <tfrecords_path>/data/dataset/flowers/</tfrecords_path>
+        <remote_location>
+            <user>gio</user>
+            <key>/data/keys/id_rsa</key>
+            <host>localhost</host>
+            <path>/data/dataset/flowers/raw-data</path>
+        </remote_location>
+        <input_class>daisy</input_class>
+	<input_class>dendelion</input_class>
+	<input_class>roses</input_class>
+	<input_class>sunflowers</input_class>
+	<input_class>tulips</input_class>
+    </input_classes>
+    <num_classes>5</num_classes>
+    <images_per_class>700</images_per_class>
+    <network_type>alexnet_v2</network_type>
+    <patience>1</patience>
+    <perform_validation>True</perform_validation>
+    <learning_rate_decay_type>exponential</learning_rate_decay_type>
+    <learning_rate>0.01</learning_rate>
+    <dropout>0.2</dropout>
+    <weight_decay>0.00004</weight_decay>
+    <seed>1234</seed>
+    <epochs_number>1</epochs_number>
+    <batch_size>32</batch_size>
+    <momentum>0.9</momentum>
+    <optimizer>momentum</optimizer>
+    <dataset>flowers</dataset>
+    <model_out>/data/model_out/</model_out>
+</tensorflow_configuration>
