@@ -25,6 +25,25 @@ import sys
 machine_data = {}
 
 def get_machine_information(mac_address, machine_name="", system_uuid=""):
+    """
+    Return information about a (virtual) machine
+
+    Parameters
+    ----------
+    mac_address: str
+        The mac address of the machine
+
+    machine_name: str
+        The hostname of the machine
+
+    system_uuid: str
+        The UUID of the machine
+
+    Return
+    ------
+    dict of str: object
+        A dictionary containing the information of the identified machine"
+    """
     global machine_data
 
     #Load machine data only once
@@ -53,9 +72,8 @@ def get_machine_information(mac_address, machine_name="", system_uuid=""):
     if mac_address != "":
         if mac_address in machine_data:
             return machine_data[mac_address]
-        else:
-            logging.error("Information about machine with mac %s not available", mac_address)
-            sys.exit(1)
+        logging.error("Information about machine with mac %s not available", mac_address)
+        sys.exit(1)
     if machine_name != "":
         for search_mac_address in machine_data:
             if machine_data[search_mac_address]["machine_name"] == machine_name:
@@ -66,11 +84,23 @@ def get_machine_information(mac_address, machine_name="", system_uuid=""):
     sys.exit(1)
 
 def main():
+    """
+    Script for collecting profiling data.
+
+    This script creates a CSV file for each application. Existing scripts cannot be overwritten, so the script fails if it finds in the current directory a CSV file.
+
+    Parameters of the scripts are:
+    root_directory: the root directory which is analyzed to collect profiling information. Data must be organized in a directories hierarchy with structure <hostname>/<app>/<configuration_name>/<timestamp>/<repetition_number>
+    -d, --debug: enables the debug printing
+    -i, --interval: the timestamp interval to be considered in profiling data collection. Experiments outside this interval are ignored
+    -b, --add-blacklisted: experiments which are blacklisted (i.e., the corresponding directory contains a file named skip) are included in the generated CSV file
+    -a, --app: generates CSV file only for a single application
+    """
     parser = argparse.ArgumentParser(description="Collect experiment results")
     parser.add_argument("root_directory", help="The root directory containing the results to be processed")
     parser.add_argument('-d', "--debug", help="Enable debug messages", default=False, action="store_true")
-    parser.add_argument('-i', "--interval", help="The interval to be considered (i.e., experiment run outside interval are excluded from generated csv")
-    parser.add_argument('-b', "--add-blacklisted", help="Add also the blacklisted experiments to the generated csvs", default=False, action="store_true")
+    parser.add_argument('-i', "--interval", help="The interval to be considered (i.e., experiment run outside interval are excluded from generated CSV")
+    parser.add_argument('-b', "--add-blacklisted", help="Add also the blacklisted experiments to the generated CSVs", default=False, action="store_true")
     parser.add_argument('-a', "--app", help="The app whose data have to be collected (default: all")
 
     args = parser.parse_args()
@@ -89,12 +119,14 @@ def main():
     #The script for sorting csv
     sort_script = os.path.join(abs_root, "sort_csv.py")
 
-    #Add apps to the directory for python packages search
+    #Add apps to the directory for python modules search
     apps_path = os.path.join(abs_root, "..", "apps")
     logging.debug("Adding %s to sys paths", apps_path)
     sys.path.append(apps_path)
 
-    #Absoute path of directory containing the data
+    sys.path.append(os.path.join(abs_root, ".."))
+
+    #Absolute path of directory containing the data
     abs_root_data = os.path.abspath(args.root_directory)
 
     #If there is any csv in the current directory aborts; user must delete them
@@ -109,7 +141,7 @@ def main():
                 logging.error("Found csv file in current directory: %s", local_file)
                 sys.exit(1)
 
-    if args.interval != None:
+    if args.interval:
         if args.interval.find(":") != -1:
             split = args.interval.split(":")
             interval_begin = split[0]
@@ -132,16 +164,20 @@ def main():
 
     for machine_name in os.listdir(abs_root_data):
         vm_path = os.path.join(abs_root_data, machine_name)
+        machine_name = machine_name.split('-')[0]
         if os.path.isdir(vm_path):
             gpu_number = 0
             gpu_type = ""
-            if machine_name == "iruel":
+            if machine_name == "bardiel":
+                gpu_number = 1
+                gpu_type = "GeForce GTX 1050"
+            elif machine_name == "iruel":
                 gpu_number = 0
                 gpu_type = "-"
             elif machine_name in {"StandardB1ms", "standardb1S"}:
                 gpu_number = 0
                 gpu_type = "-"
-            elif machine_name == "StandardNC6" or machine_name == "standardnc6":
+            elif machine_name in {"StandardNC6", "standardnc6"}:
                 gpu_number = 1
                 gpu_type = "K80"
             elif machine_name == "StandardNC12":
@@ -165,8 +201,8 @@ def main():
             elif machine_name == "ubuntu-xenial":
                 gpu_number = 0
                 gpu_type = "-"
-            elif machine_name in {"aiteam", "96d8ddb58485", "westworld"}:
-                gpu_number = 8
+            elif machine_name in {"d2beb36896eb2021", "bb657a076dc92021"}:
+                gpu_number = 1
                 gpu_type = "GTX 1080Ti"
             elif machine_name == "asus-PC":
                 gpu_number = 1
@@ -177,19 +213,25 @@ def main():
             elif machine_name in {"dgxstation-ita", "ada9167d4635", "e03c695a45a1"}:
                 gpu_number = 4
                 gpu_type = "Tesla V100"
+            elif machine_name in {"upvdocker1GPU"}:
+                gpu_number = 1
+                gpu_type = "Tesla V100"
+            elif machine_name == 'gio-XPS-15-9560':
+                gpu_number = 1
+                gpu_type = "GeForce GTX 1050"    
             else:
                 logging.warning("%s is not a known name", machine_name)
                 continue
             for app in os.listdir(vm_path):
                 app_path = os.path.join(vm_path, app)
                 if os.path.isdir(app_path) and os.path.exists(os.path.join(apps_path, app + ".py")) and (not args.app or args.app == app):
-                    app_package = __import__(app)
+                    app_module = __import__(app)
                     for experiment_configuration in os.listdir(app_path):
                         experiment_configuration_path = os.path.join(app_path, experiment_configuration)
                         if os.path.isdir(experiment_configuration_path):
                             for experiment in os.listdir(experiment_configuration_path):
                                 #Check if experiment is in the interval
-                                if args.interval != None:
+                                if args.interval:
                                     #Because of the format of the timestamp, they are actually sortable strings
                                     if experiment < interval_begin or experiment > interval_end:
                                         continue
@@ -201,10 +243,10 @@ def main():
                                             if os.path.exists(os.path.join(repetition_path, "skip")):
                                                 continue
                                             logging.debug("Processing directory %s", repetition_path)
-                                            app_package.collect_data(repetition_path, gpu_type, gpu_number, args.debug)
+                                            app_module.collect_data(repetition_path, gpu_type, gpu_number, args.debug)
                     if not os.path.exists(app + ".csv"):
                         continue
-                    if app == "tf" or app == "pytorch":
+                    if app in {"tf", "pytorch"}:
                         sort_command = sort_script + " -i" + app + ".csv -o" + app + ".csv -c0,14"
                     else:
                         sort_command = sort_script + " -i" + app + ".csv -o" + app + ".csv -c0"

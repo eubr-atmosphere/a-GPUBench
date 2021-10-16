@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Copyright 2018 Marco Speziali
+Copyright 2021 Giovanni Dispoto
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -42,6 +43,19 @@ abs_root = os.path.dirname(abs_script)
 
 
 def compute_configuration_name(cl_parameters):
+    """
+    Compute the configuration name on the basis of the values of the experiment parameters
+
+    Parameters
+    ---------
+    cl_parameters: str
+        A comma separated list of parameter=value
+
+    Return
+    ------
+    str
+        The configuration name
+    """
     parameters = compute_configuration(cl_parameters)
     configuration_name = parameters["network_type"] + "_cl_" + parameters["num_classes"] + "_im_" + parameters[
         "images_per_class"] + "_ep_" + parameters["epochs_number"] + "_bs_" + parameters["batch_size"] + "_mo_" + \
@@ -139,7 +153,8 @@ def load_configuration(config_name: str) -> {}:
     script_dir = os.path.dirname(script_path)
 
     # The absolute path of the configuration directory
-    cfg_dir = os.path.join(script_dir, "tf", "confs")
+    #/data/config
+    cfg_dir = "/data/config" #os.path.join(script_dir, "tf", "confs")
     logging.info("config directory is %s", cfg_dir)
 
     # Check the cfg_dir exists
@@ -221,11 +236,6 @@ def validate_configuration(config_param: {}) -> None:
     # Get momentum
     if config_param.get("momentum") is None:
         logging.error("Momentum not set in xml file")
-        sys.exit(1)
-
-    # Get j
-    if config_param.get("j") is None:
-        logging.error("J not set in xml file")
         sys.exit(1)
 
 
@@ -342,7 +352,8 @@ def calculate_files_number(input_classes: {}, num_classes, temporary_train, temp
         added_classes += 1
         if added_classes == int(num_classes):
             break
-
+        
+        
     return training_files_number, validation_files
 
 
@@ -577,14 +588,20 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
         num_classes = xml_configuration["num_classes"]
         user_batch_size = xml_configuration["batch_size"]
         batch_size = int(user_batch_size) * int(gpu_number)
-
+        before_line = ""
         # Computing training_time
         for line in open(execution_stderr_filename):
-            if line.startswith("INFO:tensorflow:global step "):
-                match = re.search(r'INFO:tensorflow:global step (?P<step>\d+): loss = (\d+.\d+|nan) '
-                                  r'\((?P<sec_step>\d+.\d+) sec/step\)', line)
-                step = int(match.group('step'))
-                sec_step = float(match.group('sec_step'))
+            if line.startswith("INFO: tensorflow:global step "):
+                match = re.search(r'INFO: tensorflow:global step (?P<step>\d+): loss = (\d+.\d+|nan) '
+                                  r'\((?P<sec_step>(\d+.\d+|-\d+.\d+)) sec/step\)', line)
+                try:
+                 step = int(match.group('step'))
+                except:
+                 print(line)
+                 print(before_line)
+                 
+
+                sec_step = abs(float(match.group('sec_step')))
 
                 epoch = calculate_epoch(
                     step,
@@ -598,7 +615,9 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                     initial_training_time = initial_training_time + float(sec_step)
                 current_iteration = current_iteration + 1
 
+                before_line = line
 
+        
         # Prepering csv file with details about iteration time executions
         repetition_number = os.path.basename(repetition_path)
         configuration_path = os.path.basename(os.path.dirname(os.path.dirname(repetition_path)))
@@ -611,12 +630,12 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
             iteration_file = open(iteration_file_name, "w")
             iteration_file.write("Epoch,Phase,Iteration,DataTime,TrainingTime,Testtime,End\n")
             for line in open(execution_stderr_filename):
-                if line.startswith("INFO:tensorflow:global step "):
-                    match = re.search(r'INFO:tensorflow:global step (?P<step>\d+): loss = (\d+.\d+|nan) '
-                                      r'\((?P<sec_step>\d+.\d+) sec/step\)', line)
+                if line.startswith("INFO: tensorflow:global step "):
+                    match = re.search(r'INFO: tensorflow:global step (?P<step>\d+): loss = (\d+.\d+|nan) '
+                                      r'\((?P<sec_step>(\d+.\d+|-\d+.\d+)) sec/step\)', line)
 
                     step = int(match.group('step'))
-                    sec_step = float(match.group('sec_step'))
+                    sec_step = abs(float(match.group('sec_step')))
 
                     epoch = calculate_epoch(
                         step,
@@ -633,7 +652,6 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                         initial_training_time = initial_training_time + float(sec_step)
                         initial_data_time = initial_data_time + float(iteration_data_time)
                     current_iteration = current_iteration + 1
-
                     iteration_file.write(str(epoch) + ",Training," + str(step) + "," + iteration_data_time + "," + str(
                         sec_step) + ",NaN," + end + "\n")
                     iterations_number = iterations_number + 1
@@ -768,6 +786,7 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                 if line.find("%") == -1 and line.find("utilization") == -1:
                     previous_timestamp = current_timestamp
                     split = line.split()
+                    print(split)
                     if len(split) == 2:
                         read_timestamp = split[0] + " " + split[1][0:7]
                         current_timestamp_datetime = datetime.datetime.strptime(read_timestamp, "%Y-%m-%d %X")
@@ -845,7 +864,7 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
 
         if os.path.exists(profile_file_name_cpu) and os.path.exists(profile_file_name_gpu) and not os.path.exists(
                 profile_file_name):
-            create_graph_command = os.path.join(abs_root, "pytorch",
+            create_graph_command = "python3 " + os.path.join(abs_root, "pytorch",
                                                 "generate_profile_graph.py") + " -c" + profile_file_name_cpu + " -g" + profile_file_name_gpu + " -o" + profile_file_name + " -s" + repetition_path + " -t" + overall_execution_time
             if end_information:
                 create_graph_command = create_graph_command + " -i" + iteration_file_name
@@ -879,11 +898,11 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
            sys.exit(1)
 
         #Retrieving machine information
-        #Add host_scripts to the directories for python packages search
+        #Add host_scripts to the directories for python modules search
         host_scripts_path = os.path.join(abs_root, "..", "host_scripts")
         sys.path.append(host_scripts_path)
-        collect_data_package = __import__("collect_data")
-        machine_information = collect_data_package.get_machine_information(mac_address)
+        collect_data_module = __import__("collect_data")
+        machine_information = collect_data_module.get_machine_information(mac_address)
         if xml_configuration.get("system_UUID"):
             system_uuid = xml_configuration.get("system_UUID")
         else:
@@ -909,9 +928,13 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
             GPU_usage = 0.0
             cpu_row_1 = linecache.getline(profile_file_name_sum_cpu, 2)
             split = cpu_row_1.split(",")
-            for token in split:
-                CPU_usage = CPU_usage + float(token.replace("\n", ""))
-            average_CPU_usage = CPU_usage / float(overall_execution_time)
+            if cpu_row_1.strip() != "":
+                for token in split:
+                    CPU_usage = CPU_usage + float(token.replace("\n", ""))
+                average_CPU_usage = CPU_usage / float(overall_execution_time)
+            else:
+                CPU_usage = 0
+                average_CPU_usage = 0    
             gpu_row_1 = linecache.getline(profile_file_name_sum_gpu, 2)
             split = gpu_row_1.split(",")
             for token in split:
@@ -952,7 +975,7 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
                             iteration_number_fractions[
                                 iteration_fractions[iteration_fractions_index]] = current_iterations_fraction_number
                         else:
-                            break
+                            break                               
         for iteration_fraction in iteration_fractions:
             iteration_number_fraction = iteration_number_fractions[iteration_fraction]
             epochs_number_fraction = str(float(epochs_number) * iteration_fraction)
@@ -976,6 +999,14 @@ def collect_data(repetition_path, gpu_type, gpu_number, debug):
 
 
 if __name__ == '__main__':
+    """
+    The wrapper script for training a CNN on ImageNet dataset with TensorFlow
+
+    The parameters are:
+        -d, --debug: enables the printing of the debug messages
+        -p, --parameters: a comma-separated list of parameters to be passed to the wrapped application
+        --no-clean: if True, removal of generated files (e.g., dumping of weights) is disabled
+    """
     import tensorflow as tf
 
     # Parsing input arguments
@@ -1002,16 +1033,31 @@ if __name__ == '__main__':
     sync_classes(config["input_classes"], config["num_classes"], train_path, val_path)
 
     # Creating temporary directory with experiment input
-    temp_dir, temp_train, temp_val = create_temp_dirs(config["input_classes"], config["num_classes"])
-
-    train_size, val_size = calculate_files_number(config["input_classes"],
-                                                  config["num_classes"],
-                                                  temp_train, temp_val)
+   # temp_dir, temp_train, temp_val = create_temp_dirs(config["input_classes"], config["num_classes"])
+    temp_dir = os.path.join(config["input_classes"]["remote_location"]["path"])
+    temp_train = os.path.join(config["input_classes"]["remote_location"]["path"], "train")
+    temp_val = os.path.join(config["input_classes"]["remote_location"]["path"], "val")
+    
+    #Load values of split training set and validation set from configuration file 
+    #if config['network_type'] == 'vqa_model':
+    config_file = open(os.path.join(config['input_classes']['remote_location']['path'], 'config.txt'), 'r')
+    train_size = int(config_file.readline().split(':')[1])
+    val_size = int(config_file.readline().split(':')[1])
+    config_file.close()
+    #else:                                  
+    #    train_size, val_size = calculate_files_number(config["input_classes"],
+    #                                               config["num_classes"],
+    #                                                temp_train, temp_val)
+        # train_size, val_size =                        
 
     records_path = create_tf_records(abs_root, temp_train, temp_val, tfrecord_path_base, config["num_classes"])
 
     # Computing number of iterations
-    config["iteration_number"] = int(int(config["epochs_number"]) * train_size / int(config["batch_size"])) + 1
+    config["iteration_number"] =  int(train_size / int(config["batch_size"])) + 1
+    #print("TFRECORD PATH: "+records_path)
+
+    if not "network_depth" in config.keys():
+        config["network_depth"] = -1
 
     # Adding tensorflow version
     if 'VERSION' in tf.__dict__:
@@ -1043,7 +1089,10 @@ if __name__ == '__main__':
         export_gpus_command = ""
     else:
         export_gpus_command = "CUDA_VISIBLE_DEVICES=" + ",".join(str(gpu) for gpu in list(range(0, int(gpus_number)))) + " "
-
+    
+     
+    if not "learning_rate_decay_type" in config.keys():
+        config["learning_rate_decay_type"] = "exponential"
 
     # Perform the actual nn training
     imagenet_script = os.path.join(abs_root, "tf", "slim", "train_image_classifier.py")
@@ -1051,31 +1100,49 @@ if __name__ == '__main__':
     imagenet_command = "{} python3 {} " \
                        "--log_every_n_steps={} " \
                        "--model_name={} " \
+                       "--learning_rate_decay_type={} " \
+                       "--network_depth={} " \
                        "--max_number_of_steps={} " \
+                       "--number_of_epochs={} " \
                        "--batch_size={} " \
                        "--momentum={} " \
-                       "--num_readers={} " \
-                       "--num_preprocessing_threads={} " \
+                       "--dataset_name={} " \
                        "--dataset_dir={} " \
                        "--num_classes={} " \
                        "--save_summaries_secs={} " \
                        "--save_interval_secs={} " \
                        "--optimizer={} " \
+                       "--patience={} " \
+                       "--perform_validation={} " \
+                       "--model_out={} " \
+                       "--dropout={} " \
+                       "--weight_decay={} " \
+                       "--learning_rate={} " \
+                       "--seed={} " \
         .format(
             export_gpus_command,
             imagenet_script,
             1,
             config["network_type"],
+            config["learning_rate_decay_type"],
+            config['network_depth'],
             config["iteration_number"],
+            config["epochs_number"],
             config["batch_size"],
             config["momentum"],
-            config["j"],
-            config["j"],
+            config["dataset"], 
             records_path,
             config["num_classes"],
             0,
             0,
-            "momentum"
+            config['optimizer'],
+            config['patience'],
+            config['perform_validation'],
+            config['model_out'],
+            config['dropout'],
+            config['weight_decay'],
+            config['learning_rate'],
+            config['seed'],
         )
 
     logging.info("imagenet command is %s", imagenet_command)
@@ -1100,5 +1167,6 @@ if __name__ == '__main__':
     ))
     print("Configuration file is:")
     print(generated_xml)
+
 
     sys.exit(return_value)

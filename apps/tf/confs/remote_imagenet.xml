@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tensorflow_configuration>
+    <input_classes>
+        <local_path>/data/dataset/imagenet/raw-data</local_path>
+        <tfrecords_path>/data/dataset/imagenet</tfrecords_path>
+        <remote_location>
+            <user>gio</user>
+            <key>/app/GPUPorting/keys/AIRLab/id_rsa</key>
+            <host>10.79.23.17</host>
+            <path>/data/dataset/imagenet/raw-data</path>
+        </remote_location>
+        <input_class>n03956157</input_class>
+    <input_class>n03958227</input_class>
+    <input_class>n03961711</input_class>
+    <input_class>n03967562</input_class>
+    <input_class>n03970156</input_class>
+    <input_class>n03976467</input_class>
+    <input_class>n03976657</input_class>
+    <input_class>n03977966</input_class>
+    <input_class>n03980874</input_class>
+    <input_class>n03982430</input_class>
+    </input_classes>
+    <num_classes>10</num_classes>
+    <images_per_class>9999</images_per_class>
+    <network_type>resnet_v1_50</network_type>
+    <patience>0</patience>
+    <perform_validation>False</perform_validation>
+    <learning_rate_decay_type>fixed</learning_rate_decay_type>
+    <learning_rate>0.01</learning_rate>
+    <dropout>0.2</dropout>
+    <weight_decay>0.00004</weight_decay>
+    <seed>1234</seed>
+    <epochs_number>2</epochs_number>
+    <batch_size>32</batch_size>
+    <momentum>0.9</momentum>
+    <optimizer>adam</optimizer>
+    <dataset>imagenet</dataset>
+    <model_out>/data/model_out/</model_out>
+</tensorflow_configuration>

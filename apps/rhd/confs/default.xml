@@ -1,0 +1,8 @@
+<?xml version="1.0"?>
+<rhd_configuration>
+   <input_data>/home/lattuada/atmosphere/case_study_images</input_data>
+   <num_epochs>1</num_epochs>
+   <num_images>100</num_images>
+   <batch_size>4</batch_size>
+   <gpus_number>1</gpus_number>
+</rhd_configuration>

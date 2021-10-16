@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <tensorflow_configuration>
    <input_classes>
-      <local_path>/home/polimi/imagenet/ILSVRC2012</local_path>
+      <local_path>~/imagenet/ILSVRC2012</local_path>
       <tfrecords_path>~/tmp</tfrecords_path>
       <remote_location>
          <user>logstorage</user>
-         <key>/home/polimi/a-GPUBench/keys/az_key</key>
+         <key>~/a-GPUBench/keys/id_rsa</key>
          <host>iruel.deib.polimi.it</host>
-         <path>/home/lattuada/atmoshpere/imageNet</path>
+         <path>/home/lattuada/atmosphere/imageNet</path>
       </remote_location>
       <input_class>n01440764</input_class>
       <input_class>n01443537</input_class>
