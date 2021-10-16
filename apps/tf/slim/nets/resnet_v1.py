@@ -210,8 +210,9 @@ def resnet_v1_50(num_classes=1000,
 
   # output layer
   X = tf.keras.layers.Flatten()(X)
+  X = tf.keras.layers.Dense(256)(X)
+  X = tf.keras.layers.Dropout(dropout_keep_prob)(X)
   X = tf.keras.layers.Dense(num_classes, activation='softmax', name='fc' + str(num_classes), kernel_regularizer = kernel_regularizer)(X)
-    
     
   # Create model
   model = tf.keras.Model(inputs = X_input, outputs = X, name='ResNet50')

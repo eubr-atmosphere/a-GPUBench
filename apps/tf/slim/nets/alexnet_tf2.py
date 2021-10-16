@@ -83,7 +83,10 @@ def alexnet_v2(num_classes=1000,
       or None).
     end_points: a dict of tensors with intermediate activations.
   """
-  regularizer = None
+  if weight_decay == None:
+   regularizer = None
+  else:
+   regularizer = tf.keras.regularizers.L2(weight_decay) 
 
   model = tf.keras.Sequential()
   
